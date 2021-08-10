@@ -7,9 +7,19 @@ local glreport = require 'gl.report'
 local ig = require 'ffi.imgui'
 local GLTex2D = require 'gl.tex2d'
 local GLProgram = require 'gl.program'
-local HSVTex = require 'gl.hsvtex'
 local glCallOrRun = require 'gl.call'
 require 'ext'
+
+
+-- Sets WGS-84 parameters
+local wgs84 = {}
+wgs84.a = 6378.137 --semi-major axis of the ellipsoid in 
+wgs84.b = 6356.7523142 --semi-minor axis of the ellipsoid in 
+wgs84.fla = 1 / 298.257223563 -- flattening 
+wgs84.eps = math.sqrt(1 - (wgs84.b * wgs84.b) / (wgs84.a * wgs84.a)) --first eccentricity 
+wgs84.epssq = wgs84.eps * wgs84.eps --first eccentricity squared 
+wgs84.re = 6371.2 -- Earth's radius 
+
 
 
 local londim = 1440	-- dimension in 2D x dir / spherical phi / globe lambda dir
@@ -24,7 +34,7 @@ local Bdata = ffi.new('vec3f_t[?]', londim * latdim)
 local BStat = require 'stat.set'('mag', 'x', 'y', 'z')
 
 -- cache numbers
-local fn = 'bmag.f32'
+local fn = ('bfield_year=%d_londim=%d_latdim=%d.f32'):format(year, londim, latdim)
 if os.fileexists(fn) then
 	local data = file[fn]
 	local s = ffi.cast('char*', data)
@@ -73,17 +83,6 @@ else
 	end
 
 	local nMax = #wmm
-
-
-
-	-- Sets WGS-84 parameters
-	local wgs84 = {}
-	wgs84.a = 6378.137 --semi-major axis of the ellipsoid in 
-	wgs84.b = 6356.7523142 --semi-minor axis of the ellipsoid in 
-	wgs84.fla = 1 / 298.257223563 -- flattening 
-	wgs84.eps = math.sqrt(1 - (wgs84.b * wgs84.b) / (wgs84.a * wgs84.a)) --first eccentricity 
-	wgs84.epssq = wgs84.eps * wgs84.eps --first eccentricity squared 
-	wgs84.re = 6371.2 -- Earth's radius 
 
 
 	for j=0,latdim-1 do
@@ -208,9 +207,9 @@ else
 			-- end MAG_AssociatedLegendreFunction
 			-- begin MAG_Summation 
 		
-			local Bz = 0.0;
-			local By = 0.0;
-			local Bx = 0.0;
+			local Bz = 0
+			local By = 0
+			local Bx = 0
 			for n=1,nMax do
 				local wmm_n = wmm[n]
 				for m=0,n do
@@ -263,7 +262,44 @@ else
 				-- If the user wants to avoid using this function,  please make sure that
 				-- the latitude is not exactly +/-90. An option is to make use the function
 				-- MAG_CheckGeographicPoles.
-	--			MAG_SummationSpecial(MagneticModel, SphVariables, CoordSpherical, MagneticResults);
+				-- begin MAG_SummationSpecial	
+
+				local PcupS = {[0] = 1}
+				local schmidtQuasiNorm1 = 1
+
+				By = 0
+
+				for n=1,nMax do
+					--Compute the ration between the Gauss-normalized associated Legendre
+			  		-- functions and the Schmidt quasi-normalized version. This is equivalent to
+			  		-- sqrt((m==0?1:2)*(n-m)!/(n+m!))*(2n-1)!!/(n-m)!  */
+					local m = 1
+					local wmm_n_m = wmm[n][m]
+
+					local index = (n * (n + 1) / 2 + m)
+					local schmidtQuasiNorm2 = schmidtQuasiNorm1 *  (2 * n - 1) /  n
+					local schmidtQuasiNorm3 = schmidtQuasiNorm2 * sqrt( (n * 2) /  (n + 1))
+					local schmidtQuasiNorm1 = schmidtQuasiNorm2
+					if n == 1 then
+						PcupS[n] = PcupS[n-1]
+					else
+						local k =  (((n - 1) * (n - 1)) - 1) /  ((2 * n - 1) * (2 * n - 3))
+						PcupS[n] = sin_phi * PcupS[n - 1] - k * PcupS[n - 2]
+					end
+
+					--		  1 nMax  (n+2)    n     m            m           m
+					--		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
+					--				   n=1             m=0   n            n           n  */
+					-- Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius. */
+					By = By + 
+						RelativeRadiusPower[n] *
+						(
+							wmm_n_m.g * sin_mlambda[1] -
+							wmm_n_m.h * cos_mlambda[1])
+							* PcupS[n] * schmidtQuasiNorm3
+				end
+
+				-- end MAG_SummationSpecial	
 			end
 			
 			-- end MAG_Summation 
@@ -284,16 +320,114 @@ print('BStat')
 print(BStat)
 
 local earthtex
-local hsvtex
 local Btex
 
 local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
 App.title = 'EM field' 
 
-local displayMethod = ffi.new('int[1]', 0)
+local geomIndex = ffi.new('int[1]', 0)
+local overlayIndex = ffi.new('int[1]', 1)
+local gradientIndex = ffi.new('int[1]', 0)
 
-local displayMethods = {
+local geoms = {
+	{
+		name = '2D',
+		draw = function()
+			gl.glBegin(gl.GL_QUADS)
+			gl.glTexCoord2f(0, 0)	gl.glVertex2f(-2, -1)
+			gl.glTexCoord2f(1, 0)	gl.glVertex2f(2, -1)
+			gl.glTexCoord2f(1, 1)	gl.glVertex2f(2, 1)
+			gl.glTexCoord2f(0, 1)	gl.glVertex2f(-2, 1)
+			gl.glEnd()
+		end,
+	},
+	{
+		name = '3D',
+		draw = function(self)
+			self.list = self.list or {}
+			glCallOrRun(self.list, function()
+				local HeightAboveEllipsoid = 0
+				local jres = 120
+				local ires = 60
+				for ibase=0,ires-1 do
+					gl.glBegin(gl.GL_TRIANGLE_STRIP)
+					for j=0,jres do
+						local v = j/jres
+						local lambda = math.rad((v * 2 - 1) * 180)
+						local cos_lambda = math.cos(lambda)
+						local sin_lambda = math.sin(lambda)
+						for iofs=0,1 do
+							local i = ibase + iofs
+							local u = i/ires
+							local phi = math.rad((u * 2 - 1) * 90)
+							local CosLat = math.cos(phi)
+							local SinLat = math.sin(phi)
+							
+							local rc = wgs84.a / math.sqrt(1 - wgs84.epssq * SinLat * SinLat)
+							local xp = (rc + HeightAboveEllipsoid) * CosLat
+							local zp = (rc * (1 - wgs84.epssq) + HeightAboveEllipsoid) * SinLat
+							local r = math.sqrt(xp * xp + zp * zp)
+							local phig = math.asin(zp / r)
+							-- TODO check domain and see if you can just use zp/r and sqrt(1-sin_phi^2)
+							local cos_phi = math.cos(phig)
+							local sin_phi = math.sin(phig)
+						
+							r = r / wgs84.a
+							local x = r * math.cos(phig) * cos_lambda
+							local y = r * math.cos(phig) * sin_lambda
+							local z = r * math.sin(phig)
+
+							gl.glTexCoord2f(v, u)
+							gl.glVertex3f(x, y, z)
+						end
+					end
+					gl.glEnd()
+				end
+			end)
+		end,
+	},
+}
+
+local gradients = {
+	{
+		name = 'rainbow',
+		gen = function()
+			return require 'gl.hsvtex'(256)
+		end,
+	},
+	{
+		name = 'B&W',
+		gen = function()
+			local n = 256
+			-- why is this intermittantly misaligned?
+			local image = require 'image'(
+				n, 1, 4, 'unsigned char', function(u)
+					if bit.band(u, 15) == 0 then
+						return 255,255,255,255
+					else
+						return 0,0,0,0
+					end
+				end
+			)
+			return require 'gl.tex1d'{
+				--image = image,
+				data = image.buffer,
+				width = image.width,
+
+				internalFormat = gl.GL_RGBA,
+				format = gl.GL_RGBA,
+				type = gl.GL_UNSIGNED_BYTE,
+				minFilter = gl.GL_LINEAR,
+				--magFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+				magFilter = gl.GL_LINEAR,
+				generateMipmap = true,
+			}
+		end,
+	},
+}
+
+local overlays = {
 	{
 		name = 'Earth',
 		code = [[
@@ -346,7 +480,9 @@ function App:initGL(...)
 		generateMipmap = true,
 	}
 
-	hsvtex = HSVTex(1024)
+	for _,grad in ipairs(gradients) do
+		grad.tex = grad:gen()
+	end
 
 	Btex = GLTex2D{
 		internalFormat = gl.GL_RGBA32F,
@@ -359,8 +495,8 @@ function App:initGL(...)
 		magFilter = gl.GL_NEAREST,
 	}
 
-	for _,method in ipairs(displayMethods) do
-		method.shader = GLProgram{
+	for _,overlay in ipairs(overlays) do
+		overlay.shader = GLProgram{
 			vertexCode = [[
 varying vec2 tc;
 void main() {
@@ -389,14 +525,14 @@ void main() {
 	float s = .5;
 	float alpha = .5;
 	vec3 B = texture2D(Btex, tc).rgb;
-	<?=method.code?>
+	<?=overlay.code?>
 	gl_FragColor = mix(
 		texture2D(earthtex, vec2(tc.x, 1. - tc.y)),
 		texture1D(hsvtex, s),
 		alpha);
 }
 ]], 		{
-				method = method,
+				overlay = overlay,
 				BStat = BStat,
 				clnumber = require 'cl.obj.number',
 			}),
@@ -406,7 +542,7 @@ void main() {
 				hsvtex = 2,
 			},
 		}
-		method.shader:useNone() 
+		overlay.shader:useNone() 
 	end
 
 	if self.view then
@@ -421,33 +557,55 @@ end
 function App:update(...)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
-	local shader = assert(displayMethods[tonumber(displayMethod[0])+1]).shader
+	local shader = assert(overlays[tonumber(overlayIndex[0])+1]).shader
+	local gradtex = assert(gradients[tonumber(gradientIndex[0])+1]).tex
+	local geom = assert(geoms[tonumber(geomIndex[0])+1])
+
 	shader:use()
+	
 	earthtex:bind(0)
 	Btex:bind(1)
-	hsvtex:bind(2)
+	gradtex:bind(2)
 
-	gl.glBegin(gl.GL_QUADS)
-	gl.glTexCoord2f(0, 0)	gl.glVertex2f(-2, -1)
-	gl.glTexCoord2f(1, 0)	gl.glVertex2f(2, -1)
-	gl.glTexCoord2f(1, 1)	gl.glVertex2f(2, 1)
-	gl.glTexCoord2f(0, 1)	gl.glVertex2f(-2, 1)
-	gl.glEnd()
+	geom:draw()
 	
-	hsvtex:unbind(2)
+	gradtex:unbind(2)
 	Btex:unbind(1)
 	earthtex:unbind(0)
+	
 	shader:useNone()
+	
 	glreport'here'
 
 	--render gui
 	App.super.update(self, ...)
 end
 
+local bool = ffi.new('bool[1]', false)
+
 function App:updateGUI()
-	ig.igText'here'
-	for i,method in ipairs(displayMethods) do
-		ig.igRadioButtonIntPtr(method.name, displayMethod, i-1)
+	ig.igText'geom'
+	for i,geom in ipairs(geoms) do
+		ig.igRadioButtonIntPtr(geom.name, geomIndex, i-1)
+	end
+
+	ig.igSeparator()
+	
+	ig.igText'overlay'
+	for i,overlay in ipairs(overlays) do
+		ig.igRadioButtonIntPtr(overlay.name, overlayIndex, i-1)
+	end
+	
+	ig.igSeparator()
+	
+	ig.igText'gradient'
+	for i,grad in ipairs(gradients) do
+		ig.igRadioButtonIntPtr(grad.name, gradientIndex, i-1)
+	end
+
+	bool[0] = self.view.ortho
+	if ig.igCheckbox('ortho', bool) then
+		self.view.ortho = bool[0]
 	end
 end
 
