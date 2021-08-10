@@ -3,6 +3,8 @@ local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
 local template = require 'template'
 local gl = require 'gl'
+local glreport = require 'gl.report'
+local ig = require 'ffi.imgui'
 local GLTex2D = require 'gl.tex2d'
 local GLProgram = require 'gl.program'
 local HSVTex = require 'gl.hsvtex'
@@ -13,17 +15,17 @@ require 'ext'
 local londim = 1440	-- dimension in 2D x dir / spherical phi / globe lambda dir
 local latdim = 720	-- dimension in 2D y dir / spherical theta / globe phi dir
 local HeightAboveEllipsoid = 0		-- compute at z=0 for now
-local year = 2021
+local year = 2020
 
 -- compute a 2D grid of the field
 local Bdata = ffi.new('vec3f_t[?]', londim * latdim)
 -- TODO later -- compute a 3D grid
 
-local BMagStat = require 'stat'()
+local BStat = require 'stat.set'('mag', 'x', 'y', 'z')
 
 -- cache numbers
 local fn = 'bmag.f32'
-if io.fileexists(fn) then
+if os.fileexists(fn) then
 	local data = file[fn]
 	local s = ffi.cast('char*', data)
 	local f = ffi.cast('vec3f_t*', s)
@@ -34,8 +36,9 @@ if io.fileexists(fn) then
 	for j=0,latdim-1 do
 		for i=0,londim-1 do
 			local e = i + londim * j
-			local Bmag = Bdata[e]:length()
-			BMagStat:accum(Bmag)
+			local B = Bdata[e]
+			local Bmag = B:length()
+			BStat:accum(B:length(), B.x, B.y, B.z)
 		end
 	end
 else
@@ -269,25 +272,67 @@ else
 			local e = i + londim * j
 			
 			Bdata[e]:set(Bx, By, Bz)
-			local Bmag = Bdata[e]:length()
-			BMagStat:accum(Bmag)
+			local B = Bdata[e]
+			BStat:accum(B:length(), B.x, B.y, B.z)
 		end
 	end
 
 	file[fn] = ffi.string(ffi.cast('char*', Bdata), londim * latdim * ffi.sizeof'vec3f_t')
 end
 
-print('BMagStat')
-print(BMagStat)
+print('BStat')
+print(BStat)
 
 local earthtex
 local hsvtex
-local Btex 
-local shader
+local Btex
 
-local App = require 'glapp.orbit'()
+local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
 App.title = 'EM field' 
+
+local displayMethod = ffi.new('int[1]', 0)
+
+local displayMethods = {
+	{
+		name = 'Earth',
+		code = [[
+	alpha = 0.;
+]],
+	},
+	{
+		name = '|B|', 
+		code = [[
+	s = (length(B) - BMagMin) / (BMagMax - BMagMin);
+]],
+	},
+	{
+		name = 'arg B',
+		code = [[
+	s = atan(B.y, B.x) / (2. * M_PI) + .5;
+]],
+	},
+	{
+		name = 'Bx',
+		code = [[
+	s = (B.x - BxMin) / (BxMax - BxMin);
+]],
+	},
+	{
+		name = 'By',
+		code = [[
+	s = (B.y - ByMin) / (ByMax - ByMin);
+]],
+	},
+	{
+		name = 'Bz',
+		code = [[
+	s = (B.z - BzMin) / (BzMax - BzMin);
+]],
+	},
+}
+
+
 
 function App:initGL(...)
 	if App.super.initGL then
@@ -314,17 +359,26 @@ function App:initGL(...)
 		magFilter = gl.GL_NEAREST,
 	}
 
-	shader = GLProgram{
-		vertexCode = [[
+	for _,method in ipairs(displayMethods) do
+		method.shader = GLProgram{
+			vertexCode = [[
 varying vec2 tc;
 void main() {
 	tc = gl_MultiTexCoord0.xy;
 	gl_Position = ftransform();
 }
 ]],
-		fragmentCode = template([[
-#define Bmin <?=clnumber(BMagStat.min)?>
-#define Bmax <?=clnumber(BMagStat.max)?>
+			fragmentCode = template([[
+#define BMagMin <?=clnumber(BStat.mag.min)?>
+#define BMagMax <?=clnumber(BStat.mag.max)?>
+#define BxMin <?=clnumber(BStat.x.min)?>
+#define BxMax <?=clnumber(BStat.x.max)?>
+#define ByMin <?=clnumber(BStat.y.min)?>
+#define ByMax <?=clnumber(BStat.y.max)?>
+#define BzMin <?=clnumber(BStat.z.min)?>
+#define BzMax <?=clnumber(BStat.z.max)?>
+#define M_PI <?=('%.49f'):format(math.pi)?>
+
 varying vec2 tc;
 
 uniform sampler2D earthtex;
@@ -332,40 +386,46 @@ uniform sampler2D Btex;
 uniform sampler1D hsvtex;
 
 void main() {
+	float s = .5;
+	float alpha = .5;
 	vec3 B = texture2D(Btex, tc).rgb;
-	float Blen = length(B);
-	float s = (Blen - Bmin) / (Bmax - Bmin);
+	<?=method.code?>
 	gl_FragColor = mix(
 		texture2D(earthtex, vec2(tc.x, 1. - tc.y)),
 		texture1D(hsvtex, s),
-		.5);
+		alpha);
 }
-]], 	{
-			BMagStat = BMagStat,
-			clnumber = require 'cl.obj.number',
-		}),
-		uniforms = {
-			earthtex = 0,
-			Btex = 1,
-			hsvtex = 2,
-		},
-	}
-	
-	earthtex:bind(0)
-	Btex:bind(1)
-	hsvtex:bind(2)
-	
-	shader:useNone() 
+]], 		{
+				method = method,
+				BStat = BStat,
+				clnumber = require 'cl.obj.number',
+			}),
+			uniforms = {
+				earthtex = 0,
+				Btex = 1,
+				hsvtex = 2,
+			},
+		}
+		method.shader:useNone() 
+	end
 
-	self.view.ortho = true
+	if self.view then
+		self.view.ortho = true
+		self.view.orthoSize = 2
+	end
 	gl.glClearColor(0,0,0,0)
-	self.view.orthoSize = 2
+
+	gl.glEnable(gl.GL_DEPTH_TEST)
 end
 
 function App:update(...)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
+	local shader = assert(displayMethods[tonumber(displayMethod[0])+1]).shader
 	shader:use()
+	earthtex:bind(0)
+	Btex:bind(1)
+	hsvtex:bind(2)
 
 	gl.glBegin(gl.GL_QUADS)
 	gl.glTexCoord2f(0, 0)	gl.glVertex2f(-2, -1)
@@ -374,10 +434,21 @@ function App:update(...)
 	gl.glTexCoord2f(0, 1)	gl.glVertex2f(-2, 1)
 	gl.glEnd()
 	
+	hsvtex:unbind(2)
+	Btex:unbind(1)
+	earthtex:unbind(0)
 	shader:useNone()
+	glreport'here'
 
 	--render gui
 	App.super.update(self, ...)
+end
+
+function App:updateGUI()
+	ig.igText'here'
+	for i,method in ipairs(displayMethods) do
+		ig.igRadioButtonIntPtr(method.name, displayMethod, i-1)
+	end
 end
 
 App():run()
