@@ -767,6 +767,7 @@ void main() {
 	end
 	gl.glClearColor(0,0,0,0)
 
+	gl.glCullFace(gl.GL_FRONT_FACE)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 	gl.glEnable(gl.GL_BLEND)
 	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
