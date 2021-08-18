@@ -1,6 +1,7 @@
 #!/usr/bin/env luajit
 local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
+local quatf = require 'vec-ffi.quatf'
 local template = require 'template'
 local gl = require 'gl'
 local glreport = require 'gl.report'
@@ -328,8 +329,9 @@ else
 end
 
 
--- latitude = phi in [-90,90]
--- longitude = lambda in [-180,180]
+-- latitude = phi in [-90,90] but in radians
+-- longitude = lambda in [-180,180] but in radians
+-- returns xyz cartesian coordinates in units of the wgs84's 'a' parameter
 local function latLonToCartesianWGS84(phi, lambda, height)
 	local cosLambda = math.cos(lambda)
 	local sinLambda = math.sin(lambda)
@@ -351,6 +353,53 @@ local function latLonToCartesianWGS84(phi, lambda, height)
 	local z = r2D * sinPhiSph
 
 	return x, y, z
+end
+
+-- expects xyz in cartesian units of wgs84's 'a' parameter
+local function cartesianToLatLonWGS84(x, y, z)
+	x = x * wgs84.a
+	y = y * wgs84.a
+	z = z * wgs84.a
+	
+	local modified_b = z < 0 and -wgs84.b or wgs84.b
+
+	local r = math.sqrt(x*x + y*y)
+
+	local e = ( modified_b*z - (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local f = ( modified_b*z + (wgs84.a*wgs84.a - modified_b*modified_b) ) / ( wgs84.a*r )
+	local p = (4 / 3) * (e*f + 1)
+	local q = 2 * (e*e - f*f)
+	local d = p*p*p + q*q
+
+	local v
+	if  d >= 0 then
+		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
+			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
+	else 
+		v= 2 * math.sqrt( -p )
+			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
+	end
+
+	if v*v < math.abs(p)  then
+		v = -(v*v*v + 2*q) / (3*p)
+	end
+	
+	local g = (math.sqrt( e*e + v ) + e) / 2
+	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
+
+	local rlat = math.atan( (wgs84.a*(1 - t*t)) / (2*modified_b*t) )
+	local phi = rlat
+
+	local height = (r - wgs84.a*t) * math.cos(rlat) + (z - modified_b) * math.sin(rlat)
+	local zlong = math.atan2(y, x)
+	if  zlong < 0 then
+		zlong = zlong + 2*math.pi
+	end
+	local lambda = zlong
+	while lambda > math.pi do
+		lambda= lambda - 2 * math.pi
+	end
+	return phi, lambda, height 
 end
 
 --[=[
@@ -525,13 +574,39 @@ local geomIndex = ffi.new('int[1]', 0)
 local overlayIndex = ffi.new('int[1]', 1)
 local gradientIndex = ffi.new('int[1]', 0)
 
+local function defaultDrawForChart(self)
+	local HeightAboveEllipsoid = 0
+	local jres = 120
+	local ires = 60
+	self.list = self.list or {}
+	glCallOrRun(self.list, function()
+		for ibase=0,ires-1 do
+			gl.glBegin(gl.GL_TRIANGLE_STRIP)
+			for j=0,jres do
+				local v = j/jres
+				local lambda = math.rad((v * 2 - 1) * 180)
+				for iofs=1,0,-1 do
+					local i = ibase + iofs
+					local u = i/ires
+					local phi = math.rad((u * 2 - 1) * 90)
+					
+					local x,y,z = self:chart(phi, lambda, HeightAboveEllipsoid)
+					gl.glTexCoord2f(v, u)
+					gl.glVertex3f(x, y, z)
+				end
+			end
+			gl.glEnd()
+		end
+	end)
+end
+
 local geoms = {
 	{
 		name = '2D',
-		chart = function(phi, lambda, height) 
-			return lambda*2/math.pi, phi*2/math.pi, height 
+		chart = function(self, phi, lambda, height) 
+			return lambda*2/math.pi, phi*2/math.pi, height / wgs84.a
 		end,
-		basis = function(geom, phi, lambda, height)
+		basis = function(self, phi, lambda, height)
 			-- Bx is north, By is east, Bz is down ... smh
 			return 
 				vec3f(0, 1, 0),
@@ -548,36 +623,34 @@ local geoms = {
 		end,
 	},
 	{
+		name = 'North Pole',
+		chart = function(self, phi, lambda, height) 
+			local theta = .5 * math.pi - phi
+			return 
+				math.cos(lambda) * theta,
+				math.sin(lambda) * theta,
+				height / wgs84.a
+		end,
+		basis = function(self, phi, lambda, height)
+			local cosLambda = math.cos(lambda)
+			local sinLambda = math.sin(lambda)
+			return 
+				vec3f(-cosLambda, -sinLambda, 0),
+				vec3f(-sinLambda, cosLambda, 0),
+				vec3f(0, 0, -1)
+		end,
+		draw = defaultDrawForChart,
+	},
+
+	{
 		name = '3D',
-		chart = latLonToCartesianWGS84,
-		basis = function(geom, phi, lambda, height)
+		chart = function(self, phi, lambda, height)
+			return latLonToCartesianWGS84(phi, lambda, height)
+		end,
+		basis = function(self, phi, lambda, height)
 			return latLonToCartesianTangentSpaceWGS84(phi, lambda, height)
 		end,
-		draw = function(self)
-			local HeightAboveEllipsoid = 0
-			local jres = 120
-			local ires = 60
-			self.list = self.list or {}
-			glCallOrRun(self.list, function()
-				for ibase=0,ires-1 do
-					gl.glBegin(gl.GL_TRIANGLE_STRIP)
-					for j=0,jres do
-						local v = j/jres
-						local lambda = math.rad((v * 2 - 1) * 180)
-						for iofs=0,1 do
-							local i = ibase + iofs
-							local u = i/ires
-							local phi = math.rad((u * 2 - 1) * 90)
-							
-							local x,y,z = self.chart(phi, lambda, HeightAboveEllipsoid)
-							gl.glTexCoord2f(v, u)
-							gl.glVertex3f(x, y, z)
-						end
-					end
-					gl.glEnd()
-				end
-			end)
-		end,
+		draw = defaultDrawForChart,
 	},
 }
 
@@ -767,7 +840,7 @@ void main() {
 	end
 	gl.glClearColor(0,0,0,0)
 
-	gl.glCullFace(gl.GL_FRONT_FACE)
+	gl.glEnable(gl.GL_CULL_FACE)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 	gl.glEnable(gl.GL_BLEND)
 	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -778,30 +851,67 @@ local function degmintofrac(deg, min, sec)
 end
 
 local function drawReading(info)
-	local height = 1e-6
+	local geom = info.geom
+
+	local height = 1e-2
 	local lat = degmintofrac(table.unpack(info.lat))
 	local lon = degmintofrac(table.unpack(info.lon))
 
+
+	local phi = math.rad(lat)
+	local lambda = math.rad(lon)
+	local headingRad = math.rad(info.heading)
+
+	local x,y,z = geom:chart(phi, lambda, height)
+	local ex, ey, ez = geom:basis(phi, lambda, height)
+	local H = (ex * math.cos(headingRad) + ey * math.sin(headingRad)) * .2
+	
 	gl.glColor3f(1,1,0)
 	
 	-- TODO geom should be transforms, and apply to all geom rendered
 	gl.glPointSize(5)
 	gl.glBegin(gl.GL_POINTS)
-
-	-- reading #1
-	gl.glVertex3f(
-		info.geom.chart(
-			math.rad(lat),
-			math.rad(lon),
-			height
-		)
-	)
+	
+	gl.glVertex3f(x, y, z)
 	
 	gl.glEnd()
 	gl.glPointSize(1)
 
-	-- draw north vs magnetic north heading
 	gl.glBegin(gl.GL_LINES)
+	gl.glColor3f(0,0,1)
+	gl.glVertex3f(x, y, z)
+	gl.glVertex3f(x + ex.x * .2, y + ex.y * .2, z + ex.z * .2)
+	gl.glColor3f(0,1,0)
+	gl.glVertex3f(x, y, z)
+	gl.glVertex3f(x + ey.x * .2, y + ey.y * .2, z + ey.z * .2)
+	gl.glColor3f(1,0,1)
+	gl.glVertex3f(x, y, z)
+	gl.glVertex3f(x + H.x, y + H.y, z + H.z)
+	gl.glEnd()
+	
+	-- now use wgs84 here regardless of 'geom'
+	local pos = vec3f(latLonToCartesianWGS84(phi, lambda, height))
+	local ex, ey, ez = latLonToCartesianTangentSpaceWGS84(phi, lambda, .1)
+	local H = (ex * math.cos(headingRad) + ey * math.sin(headingRad)) * .2
+
+	local axis = pos:cross(H):normalize()
+
+	local degToSpan = 90
+	local numSteps = 90
+	local dtheta = degToSpan / numSteps
+	local q = quatf():fromAngleAxis(axis.x, axis.y, axis.z, dtheta)
+	
+	-- draw north vs magnetic north heading
+	gl.glColor3f(1,1,1)
+	gl.glBegin(gl.GL_LINE_STRIP)
+
+	gl.glVertex3f(geom:chart(cartesianToLatLonWGS84(pos:unpack())))
+	for i=1,numSteps do
+		
+		q:rotate(pos, pos)
+--print(pos, geom:chart(cartesianToLatLonWGS84(pos:unpack())))	
+		gl.glVertex3f(geom:chart(cartesianToLatLonWGS84(pos:unpack())))
+	end
 	
 	--[[
 	ok how to do this?  geodesics and connections?  rotate spherical coordinates for now?
@@ -815,6 +925,9 @@ local function drawReading(info)
 
 	gl.glEnd()
 end
+
+-- set to 0 to flatten vector field against surface
+local fieldZScale = ffi.new('float[1]', 1)
 
 local function drawVectorField(geom)
 
@@ -840,7 +953,7 @@ local function drawVectorField(geom)
 		for j=0,jres do
 			local v = j/jres
 			local lambda = math.rad((v * 2 - 1) * 180)
-			local x,y,z = geom.chart(phi, lambda, 0)
+			local x,y,z = geom:chart(phi, lambda, 0)
 			gl.glTexCoord2f(u,v)
 			-- TODO calc B here, and add here
 			local Bx, By, Bz = calcB(phi, lambda, HeightAboveEllipsoid)
@@ -848,16 +961,18 @@ local function drawVectorField(geom)
 			By = By * scale	-- east component
 			Bz = Bz * scale	-- down component
 			
-			local BxBasis, ByBasis, BzBasis = geom:basis(phi, lambda, HeightAboveEllipsoid)
+			local ex, ey, ez = geom:basis(phi, lambda, HeightAboveEllipsoid)
 
 			--[[ verify the basis is correct
 			scale = 3 / jres
-			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + BxBasis.x * scale, y + BxBasis.y * scale, z + BxBasis.z * scale)
-			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ByBasis.x * scale, y + ByBasis.y * scale, z + ByBasis.z * scale)
-			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + BzBasis.x * scale, y + BzBasis.y * scale, z + BzBasis.z * scale)
+			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ex.x * scale, y + ex.y * scale, z + ex.z * scale)
+			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ey.x * scale, y + ey.y * scale, z + ey.z * scale)
+			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ez.x * scale, y + ez.y * scale, z + ez.z * scale)
 			--]]
 			-- [[ draw our arrow
-			local B = BxBasis * Bx + ByBasis * By + BzBasis * Bz
+			local B = ex * Bx 
+				+ ey * By 
+				+ ez * Bz * fieldZScale[0]
 
 			for _,q in ipairs(arrow) do
 				local s, t = q[1], q[2]
@@ -892,26 +1007,35 @@ function App:update(...)
 
 	gl.glUniform1f(shader.uniforms.alpha.loc, 1)
 
+	shader:useNone()
+	
 	drawReading{
 		geom = geom,
 		lat = {42, 52, 45.021},
 		lon = {74, 34, 16.004},
+		heading = 5,
 	}
 
 	drawReading{
 		geom = geom,
 		lat = {33, 59, 38},		-- lat
 		lon = {-80, -27, -56},	-- lon
+		heading = .5,
 	}
 
 	if doDrawVectorField then
 		drawVectorField(geom)
 	end
+	
+	shader:use()
 
 	gl.glUniform1f(shader.uniforms.alpha.loc, drawAlpha[0])
 
+	gl.glCullFace(gl.GL_FRONT)
 	geom:draw()
-	
+	gl.glCullFace(gl.GL_BACK)
+	geom:draw()
+
 	gradtex:unbind(2)
 	Btex:unbind(1)
 	earthtex:unbind(0)
@@ -958,6 +1082,7 @@ function App:updateGUI()
 	end
 
 	ig.igInputFloat('alpha', drawAlpha)
+	ig.igInputFloat('field z scale', fieldZScale)
 end
 
 App():run()
