@@ -565,7 +565,7 @@ local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
 App.title = 'EM field' 
 
-local geomIndex = ffi.new('int[1]', 1)	-- north pole
+local geomIndex = ffi.new('int[1]', 0)	-- north pole
 local overlayIndex = ffi.new('int[1]', 1)
 local gradientIndex = ffi.new('int[1]', 0)
 
@@ -837,6 +837,8 @@ void main() {
 [[
 #version 120
 
+//#define CALC_B_ON_GPU
+
 #ifdef CALC_B_ON_GPU
 ]]
 ..
@@ -876,8 +878,8 @@ void main() {
 	float hsvBlend = .5;
 
 #ifdef CALC_B_ON_GPU //calc on gpu
-	float phi = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
-	float lambda = (texcoordv.y - .5) * M_PI;	//[-pi/2, pi/2]
+	float phi = (texcoordv.y - .5) * M_PI;	//[-pi, pi]
+	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi/2, pi/2]
 	vec3 B = calcB(vec3(phi, lambda, 0.));
 #else //using the generated texture	
 	vec3 B = texture2D(Btex, texcoordv).rgb;
@@ -1001,6 +1003,7 @@ end
 -- set to 0 to flatten vector field against surface
 local fieldZScale = ffi.new('float[1]', 1)
 
+local arrowScale = ffi.new('float[1]', 5)
 local function drawVectorField(geom)
 
 	local arrow = {
@@ -1015,7 +1018,7 @@ local function drawVectorField(geom)
 	local height = 0
 	local jres = 60
 	local ires = 30
-	local scale = 10 / (BStat.mag.max * jres)
+	local scale = arrowScale[0]  / (BStat.mag.max * ires)
 --	geom.list = geom.list or {}
 --	glCallOrRun(geom.list, function()
 	gl.glBegin(gl.GL_LINES)
@@ -1161,7 +1164,8 @@ function App:updateGUI()
 	end
 
 	ig.igInputFloat('alpha', drawAlpha)
-	ig.igInputFloat('field z scale', fieldZScale)
+	ig.igInputFloat('field z', fieldZScale)
+	ig.igInputFloat('field size', arrowScale)
 end
 
 App():run()
