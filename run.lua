@@ -23,8 +23,6 @@ wgs84.re = 6371.2 -- Earth's radius
 
 
 
-local londim = 1440	-- dimension in 2D x dir / spherical phi / globe lambda dir
-local latdim = 720	-- dimension in 2D y dir / spherical theta / globe phi dir
 local HeightAboveEllipsoid = 0		-- compute at z=0 for now
 local year = 2020	-- TODO add support for dg/dh
 
@@ -280,50 +278,6 @@ end
 
 
 
-
-
-
--- compute a 2D grid of the field
-local Bdata = ffi.new('vec3f_t[?]', londim * latdim)
--- TODO later -- compute a 3D grid
-
-local BStat = require 'stat.set'('mag', 'x', 'y', 'z', 'mag2d')
-
--- cache numbers
-local fn = ('bfield_year=%d_londim=%d_latdim=%d.f32'):format(year, londim, latdim)
-if os.fileexists(fn) then
-	local data = file[fn]
-	local s = ffi.cast('char*', data)
-	local f = ffi.cast('vec3f_t*', s)
-	assert(#data == londim * latdim * ffi.sizeof'vec3f_t')
-
-	ffi.copy(ffi.cast('char*', Bdata), f, #data)
-
-	for j=0,latdim-1 do
-		for i=0,londim-1 do
-			local e = i + londim * j
-			local B = Bdata[e]
-			local Bmag = B:length()
-			BStat:accum(B:length(), B.x, B.y, B.z, math.sqrt(B.x*B.x + B.y*B.y))
-		end
-	end
-else
-	for j=0,latdim-1 do
-		local phi = math.rad(((j+.5)/latdim * 2 - 1) * 90)	-- spherical theta
-		for i=0,londim-1 do
-			local lambda = math.rad(((i+.5)/londim * 2 - 1) * 180)	-- spherical phi
-			local Bx, By, Bz = calcB(phi, lambda, HeightAboveEllipsoid)
-			local e = i + londim * j
-			Bdata[e]:set(Bx, By, Bz)
-			local B = Bdata[e]
-			BStat:accum(B:length(), B.x, B.y, B.z, math.sqrt(B.x*B.x + B.y*B.y))
-		end
-	end
-
-	file[fn] = ffi.string(ffi.cast('char*', Bdata), londim * latdim * ffi.sizeof'vec3f_t')
-end
-
-
 -- latitude = phi in [-pi/2, pi/2]
 -- longitude = lambda in [-pi,pi]
 -- returns xyz cartesian coordinates in units of the wgs84's 'a' parameter
@@ -555,11 +509,15 @@ local function latLonToCartesianTangentSpaceWGS84(phi, lambda, height)
 end
 
 
-print('BStat')
-print(BStat)
+local BStat = require 'stat.set'('mag', 'x', 'y', 'z', 'mag2d')
+
+local londim -- dimension in 2D x dir / spherical phi / globe lambda dir
+local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
+
+local Btex
+
 
 local earthtex
-local Btex
 
 local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
@@ -786,6 +744,8 @@ local overlays = {
 
 
 
+local buildBTexOnGPU = true
+
 function App:initGL(...)
 	if App.super.initGL then
 		App.super.initGL(self, ...)
@@ -802,31 +762,22 @@ function App:initGL(...)
 		grad.tex = grad:gen()
 	end
 
-	Btex = GLTex2D{
-		internalFormat = gl.GL_RGBA32F,
-		width = londim,
-		height = latdim,
-		format = gl.GL_RGB,
-		type = gl.GL_FLOAT,
-		data = ffi.cast('char*', Bdata),
-		minFilter = gl.GL_LINEAR,
-		magFilter = gl.GL_LINEAR,
-		--magFilter = gl.GL_LINEAR_MIPMAP_LINEAR,	-- not working
-		generateMipmap = true,
-		wrap = {
-			s = gl.GL_REPEAT,
-			t = gl.GL_REPEAT,
-		},
-	}
-	glreport'here'
 
-	for _,overlay in ipairs(overlays) do
-		overlay.shader = GLProgram{
+	local calc_b_shader = file['calc_b.shader']
+
+
+	-- only used for stat calc
+	local Bdata
+	
+	if buildBTexOnGPU then
+	
+		-- can be arbitrary
+		londim = 1440
+		latdim = 720
+
+		local calcBShader = GLProgram{
 			vertexCode = [[
 varying vec2 texcoordv;
-
-uniform mat4 modelViewMatrix;
-uniform mat4 projectionMatrix;
 
 void main() {
 	texcoordv = gl_MultiTexCoord0.xy;
@@ -837,20 +788,156 @@ void main() {
 [[
 #version 120
 
+]]..calc_b_shader..[[
+
+#define M_PI <?=('%.49f'):format(math.pi)?>
+
+varying vec2 texcoordv;
+
+void main() {
+	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
+	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
+	vec3 B = calcB(vec3(phi, lambda, 0.));
+	gl_FragColor = vec4(B, 1.);
+}
+]],
+				{
+					calc_b_shader = calc_b_shader,
+					wgs84 = wgs84,
+					wmm = wmm,
+				}
+			)
+		}
+		calcBShader:useNone() 
+
+		Btex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGB,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_LINEAR,
+			magFilter = gl.GL_LINEAR,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}
+	
+-- [[
+		local fbo = require 'gl.fbo'()
+		fbo:draw{
+			viewport = {0, 0, londim, latdim},
+			resetProjection = true,
+			shader = calcBShader,
+			dest = Btex,
+		}
+--]]
+
+		Btex:bind()
+		
+		Btex:generateMipmap()
+
+		Bdata = ffi.new('vec3f_t[?]', londim * latdim)
+		gl.glGetTexImage(
+			Btex.target,
+			0,
+			gl.GL_RGB,
+			gl.GL_FLOAT,
+			ffi.cast('char*', Bdata)
+		)
+		
+		Btex:unbind()
+
+	else
+		
+		-- this is the resolution of the WMM: 15 minutes
+		londim = 1440
+		latdim = 720
+
+		-- compute a 2D grid of the field
+		Bdata = ffi.new('vec3f_t[?]', londim * latdim)
+		-- TODO later -- compute a 3D grid
+
+		-- TODO cache even for gpu-generated? 
+		-- nah, why bother, it is so quick
+		-- cache numbers
+		local fn = ('bfield_year=%d_londim=%d_latdim=%d.f32'):format(year, londim, latdim)
+		if os.fileexists(fn) then
+			local data = file[fn]
+			local s = ffi.cast('char*', data)
+			local f = ffi.cast('vec3f_t*', s)
+			assert(#data == londim * latdim * ffi.sizeof'vec3f_t')
+			ffi.copy(ffi.cast('char*', Bdata), f, #data)
+		else
+			for j=0,latdim-1 do
+				local phi = math.rad(((j+.5)/latdim * 2 - 1) * 90)	-- spherical theta
+				for i=0,londim-1 do
+					local lambda = math.rad(((i+.5)/londim * 2 - 1) * 180)	-- spherical phi
+					local Bx, By, Bz = calcB(phi, lambda, HeightAboveEllipsoid)
+					local e = i + londim * j
+					Bdata[e]:set(Bx, By, Bz)
+				end
+			end
+
+			file[fn] = ffi.string(ffi.cast('char*', Bdata), londim * latdim * ffi.sizeof'vec3f_t')
+		end
+
+		Btex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGB,
+			type = gl.GL_FLOAT,
+			data = ffi.cast('char*', Bdata),
+			minFilter = gl.GL_LINEAR,
+			magFilter = gl.GL_LINEAR,
+			--magFilter = gl.GL_LINEAR_MIPMAP_LINEAR,	-- not working
+			generateMipmap = true,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}
+	end
+
+	for j=0,latdim-1 do
+		for i=0,londim-1 do
+			local e = i + londim * j
+			local B = Bdata[e]
+			local Bmag = B:length()
+			BStat:accum(B:length(), B.x, B.y, B.z, math.sqrt(B.x*B.x + B.y*B.y))
+		end
+	end
+
+	print('BStat')
+	print(BStat)
+
+	glreport'here'
+
+
+
+	for _,overlay in ipairs(overlays) do
+		overlay.shader = GLProgram{
+			vertexCode = [[
+varying vec2 texcoordv;
+
+void main() {
+	texcoordv = gl_MultiTexCoord0.xy;
+	gl_Position = ftransform();
+}
+]],
+			fragmentCode = template(
+[[
+#version 120
+
+
 //#define CALC_B_ON_GPU
 
 #ifdef CALC_B_ON_GPU
-]]
-..
-template(
-	file['calc_b.shader'],
-	{
-		wgs84 = wgs84,
-		wmm = wmm,
-	}
-)
-..
-[[
+
+]]..calc_b_shader..[[
+
 #endif	//CALC_B_ON_GPU
 
 
@@ -864,6 +951,7 @@ template(
 #define ByMax <?=clnumber(BStat.y.max)?>
 #define BzMin <?=clnumber(BStat.z.min)?>
 #define BzMax <?=clnumber(BStat.z.max)?>
+
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
 varying vec2 texcoordv;
@@ -878,14 +966,15 @@ void main() {
 	float hsvBlend = .5;
 
 #ifdef CALC_B_ON_GPU //calc on gpu
-	float phi = (texcoordv.y - .5) * M_PI;	//[-pi, pi]
-	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi/2, pi/2]
+	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
+	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
 	vec3 B = calcB(vec3(phi, lambda, 0.));
 #else //using the generated texture	
 	vec3 B = texture2D(Btex, texcoordv).rgb;
 #endif
 
 	<?=overlay.code?>
+	
 	gl_FragColor = mix(
 		texture2D(earthtex, vec2(texcoordv.x, 1. - texcoordv.y)),
 		texture1D(hsvtex, s),
@@ -896,6 +985,9 @@ void main() {
 				overlay = overlay,
 				BStat = BStat,
 				clnumber = require 'cl.obj.number',
+				-- for calc_b.shader:
+				wgs84 = wgs84,
+				wmm = wmm,
 			}),
 			uniforms = {
 				earthtex = 0,
