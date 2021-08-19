@@ -847,7 +847,7 @@ glreport'here'
 			format = gl.GL_RGB,
 			type = gl.GL_FLOAT,
 			minFilter = gl.GL_LINEAR,
-			magFilter = gl.GL_LINEAR,
+			magFilter = gl.GL_NEAREST,
 			wrap = {
 				s = gl.GL_REPEAT,
 				t = gl.GL_REPEAT,
@@ -909,7 +909,6 @@ void main() {
 	vec3 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / dlambda.y / wgs84_a;
 	vec3 dheight_B = (calcB(plh + dheight) - calcB(plh - dheight)) / dheight.z;
 
-
 	float div2D_B = dphi_B.x + dlambda_B.y;
 	float div_B = div2D_B + dheight_B.z;
 
@@ -948,7 +947,6 @@ glreport'here'
 			format = gl.GL_RGBA,
 			type = gl.GL_FLOAT,
 			minFilter = gl.GL_LINEAR,
-			--magFilter = gl.GL_LINEAR,
 			magFilter = gl.GL_NEAREST,
 			wrap = {
 				s = gl.GL_REPEAT,
