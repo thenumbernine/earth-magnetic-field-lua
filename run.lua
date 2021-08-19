@@ -1,6 +1,7 @@
 #!/usr/bin/env luajit
 local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
+local vec4f = require 'vec-ffi.vec4f'
 local quatf = require 'vec-ffi.quatf'
 local template = require 'template'
 local gl = require 'gl'
@@ -9,6 +10,8 @@ local ig = require 'ffi.imgui'
 local GLTex2D = require 'gl.tex2d'
 local GLProgram = require 'gl.program'
 local glCallOrRun = require 'gl.call'
+local clnumber = require 'cl.obj.number'
+local StatSet = require 'stat.set'
 require 'ext'
 
 
@@ -509,12 +512,16 @@ local function latLonToCartesianTangentSpaceWGS84(phi, lambda, height)
 end
 
 
-local BStat = require 'stat.set'('mag', 'x', 'y', 'z', 'mag2d')
+local BStat = StatSet(
+	'mag', 'x', 'y', 'z', 'mag2d',
+	'div', 'div2d', 'curlZ', 'curlMag'
+)
 
 local londim -- dimension in 2D x dir / spherical phi / globe lambda dir
 local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
 
 local Btex
+local B2tex
 
 
 local earthtex
@@ -723,28 +730,49 @@ local overlays = {
 ]],
 	},
 	{
-		name = 'Bx',
+		name = 'Bx (north)',
 		code = [[
 	s = (B.x - BxMin) / (BxMax - BxMin);
 ]],
 	},
 	{
-		name = 'By',
+		name = 'By (east)',
 		code = [[
 	s = (B.y - ByMin) / (ByMax - ByMin);
 ]],
 	},
 	{
-		name = 'Bz',
+		name = 'Bz (inward)',
 		code = [[
 	s = (B.z - BzMin) / (BzMax - BzMin);
 ]],
 	},
+	{
+		name = 'div B',
+		code = [[
+	s = (B2.x - BDivMin) / (BDivMax - BDivMin);
+]],
+	},
+	{
+		name = 'div2D B',
+		code = [[
+	s = (B2.y - BDiv2DMin) / (BDiv2DMax - BDiv2DMin);
+]],
+	},
+	{
+		name = 'curl B z',
+		code = [[
+	s = (B2.z - BCurlZMin) / (BCurlZMax - BCurlZMin);
+]],
+	},
+	{
+		name = 'curl B Mag',
+		code = [[
+	s = (B2.w - BCurlMagMin) / (BCurlMagMax - BCurlMagMin);
+]],
+	},
 }
 
-
-
-local buildBTexOnGPU = true
 
 function App:initGL(...)
 	if App.super.initGL then
@@ -764,16 +792,16 @@ function App:initGL(...)
 
 
 	local calc_b_shader = file['calc_b.shader']
-
-
-	-- only used for stat calc
-	local Bdata
 	
-	if buildBTexOnGPU then
-	
+	do
+		print'generating B field...'
 		-- can be arbitrary
+		-- but the WMM model is for 15 mins, so [360,180] x4
 		londim = 1440
 		latdim = 720
+		
+		local fbo = require 'gl.fbo'()
+glreport'here'
 
 		local calcBShader = GLProgram{
 			vertexCode = [[
@@ -808,7 +836,9 @@ void main() {
 				}
 			)
 		}
+glreport'here'
 		calcBShader:useNone() 
+glreport'here'
 
 		Btex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
@@ -823,22 +853,126 @@ void main() {
 				t = gl.GL_REPEAT,
 			},
 		}
+glreport'here'
 	
--- [[
-		local fbo = require 'gl.fbo'()
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			resetProjection = true,
 			shader = calcBShader,
 			dest = Btex,
 		}
---]]
+glreport'here'
+	
+		Btex:bind()
+		Btex:generateMipmap()
+		Btex:unbind()
+glreport'here'
+
+-- [=[ hmm, better way than copy paste?
+		
+		print'generating div B and curl B...'
+
+
+		local calcB2Shader = GLProgram{
+			vertexCode = [[
+varying vec2 texcoordv;
+
+void main() {
+	texcoordv = gl_MultiTexCoord0.xy;
+	gl_Position = ftransform();
+}
+]],
+			fragmentCode = template(
+[[
+#version 120
+
+]]..calc_b_shader..[[
+
+#define M_PI <?=('%.49f'):format(math.pi)?>
+
+#define latdim	<?=clnumber(latdim)?>
+#define londim	<?=clnumber(londim)?>
+
+vec3 dphi = vec3(M_PI / londim, 0., 0.);
+vec3 dlambda = vec3(0., 2. * M_PI / latdim, 0.);
+vec3 dheight = vec3(0., 0., 1.);
+
+varying vec2 texcoordv;
+
+void main() {
+	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
+	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
+	
+	vec3 plh = vec3(phi, lambda, 0.);
+
+	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / dphi.x / (wgs84_a * cos(plh.x));
+	vec3 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / dlambda.y / wgs84_a;
+	vec3 dheight_B = (calcB(plh + dheight) - calcB(plh - dheight)) / dheight.z;
+
+
+	float div2D_B = dphi_B.x + dlambda_B.y;
+	float div_B = div2D_B + dheight_B.z;
+
+	vec3 curl_B = vec3(
+		dlambda_B.z - dheight_B.y,
+		dheight_B.x - dphi_B.z,
+		dphi_B.y - dlambda_B.x
+	);
+
+	gl_FragColor = vec4(
+		div_B,
+		div2D_B, 
+		curl_B.z,
+		length(curl_B)
+	);
+}
+]],
+				{
+					latdim = latdim,
+					londim = londim,
+					calc_b_shader = calc_b_shader,
+					wgs84 = wgs84,
+					wmm = wmm,
+					clnumber = clnumber,
+				}
+			)
+		}
+glreport'here'
+		calcB2Shader:useNone() 
+glreport'here'
+
+		B2tex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_LINEAR,
+			--magFilter = gl.GL_LINEAR,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}
+glreport'here'
+	
+		fbo:draw{
+			viewport = {0, 0, londim, latdim},
+			resetProjection = true,
+			shader = calcB2Shader,
+			dest = B2tex,
+		}
+glreport'here'
+
+
+
 
 		Btex:bind()
+glreport'here'
 		
-		Btex:generateMipmap()
-
-		Bdata = ffi.new('vec3f_t[?]', londim * latdim)
+		-- only used for stat calc
+		local Bdata = ffi.new('vec3f_t[?]', londim * latdim)
 		gl.glGetTexImage(
 			Btex.target,
 			0,
@@ -846,72 +980,50 @@ void main() {
 			gl.GL_FLOAT,
 			ffi.cast('char*', Bdata)
 		)
+glreport'here'
 		
-		Btex:unbind()
-
-	else
+		B2tex:bind()
+glreport'here'
 		
-		-- this is the resolution of the WMM: 15 minutes
-		londim = 1440
-		latdim = 720
+		--B2tex:generateMipmap()
 
-		-- compute a 2D grid of the field
-		Bdata = ffi.new('vec3f_t[?]', londim * latdim)
-		-- TODO later -- compute a 3D grid
+		local B2data = ffi.new('vec4f_t[?]', londim * latdim)
+		gl.glGetTexImage(
+			B2tex.target,
+			0,
+			gl.GL_RGBA,
+			gl.GL_FLOAT,
+			ffi.cast('char*', B2data)
+		)
+glreport'here'
+		
+		B2tex:unbind()
+glreport'here'
 
-		-- TODO cache even for gpu-generated? 
-		-- nah, why bother, it is so quick
-		-- cache numbers
-		local fn = ('bfield_year=%d_londim=%d_latdim=%d.f32'):format(year, londim, latdim)
-		if os.fileexists(fn) then
-			local data = file[fn]
-			local s = ffi.cast('char*', data)
-			local f = ffi.cast('vec3f_t*', s)
-			assert(#data == londim * latdim * ffi.sizeof'vec3f_t')
-			ffi.copy(ffi.cast('char*', Bdata), f, #data)
-		else
-			for j=0,latdim-1 do
-				local phi = math.rad(((j+.5)/latdim * 2 - 1) * 90)	-- spherical theta
-				for i=0,londim-1 do
-					local lambda = math.rad(((i+.5)/londim * 2 - 1) * 180)	-- spherical phi
-					local Bx, By, Bz = calcB(phi, lambda, HeightAboveEllipsoid)
-					local e = i + londim * j
-					Bdata[e]:set(Bx, By, Bz)
-				end
+		for j=0,latdim-1 do
+			for i=0,londim-1 do
+				local e = i + londim * j
+				local B = Bdata[e]
+				local B2 = B2data[e]
+				local Bmag = B:length()
+				BStat:accum(
+					B:length(),
+					B.x,
+					B.y,
+					B.z,
+					math.sqrt(B.x*B.x + B.y*B.y),
+					B2.x,
+					B2.y,
+					B2.z,
+					B2.w
+				)
 			end
-
-			file[fn] = ffi.string(ffi.cast('char*', Bdata), londim * latdim * ffi.sizeof'vec3f_t')
 		end
 
-		Btex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,
-			width = londim,
-			height = latdim,
-			format = gl.GL_RGB,
-			type = gl.GL_FLOAT,
-			data = ffi.cast('char*', Bdata),
-			minFilter = gl.GL_LINEAR,
-			magFilter = gl.GL_LINEAR,
-			--magFilter = gl.GL_LINEAR_MIPMAP_LINEAR,	-- not working
-			generateMipmap = true,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}
+		print('BStat')
+		print(BStat)
+--]=]
 	end
-
-	for j=0,latdim-1 do
-		for i=0,londim-1 do
-			local e = i + londim * j
-			local B = Bdata[e]
-			local Bmag = B:length()
-			BStat:accum(B:length(), B.x, B.y, B.z, math.sqrt(B.x*B.x + B.y*B.y))
-		end
-	end
-
-	print('BStat')
-	print(BStat)
 
 	glreport'here'
 
@@ -929,18 +1041,6 @@ void main() {
 ]],
 			fragmentCode = template(
 [[
-#version 120
-
-
-//#define CALC_B_ON_GPU
-
-#ifdef CALC_B_ON_GPU
-
-]]..calc_b_shader..[[
-
-#endif	//CALC_B_ON_GPU
-
-
 #define BMagMin <?=clnumber(BStat.mag.min)?>
 #define BMagMax <?=clnumber(BStat.mag.max)?>
 #define BMag2DMin <?=clnumber(BStat.mag2d.min)?>
@@ -951,6 +1051,14 @@ void main() {
 #define ByMax <?=clnumber(BStat.y.max)?>
 #define BzMin <?=clnumber(BStat.z.min)?>
 #define BzMax <?=clnumber(BStat.z.max)?>
+#define BDivMin <?=clnumber(BStat.div.min)?>
+#define BDivMax <?=clnumber(BStat.div.max)?>
+#define BDiv2DMin <?=clnumber(BStat.div2d.min)?>
+#define BDiv2DMax <?=clnumber(BStat.div2d.max)?>
+#define BCurlZMin <?=clnumber(BStat.curlZ.min)?>
+#define BCurlZMax <?=clnumber(BStat.curlZ.max)?>
+#define BCurlMagMin <?=clnumber(BStat.curlMag.min)?>
+#define BCurlMagMax <?=clnumber(BStat.curlMag.max)?>
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
@@ -958,20 +1066,16 @@ varying vec2 texcoordv;
 
 uniform sampler2D earthtex;
 uniform sampler2D Btex;
+uniform sampler2D B2tex;
 uniform sampler1D hsvtex;
 uniform float alpha;
 
 void main() {
 	float s = .5;
 	float hsvBlend = .5;
-
-#ifdef CALC_B_ON_GPU //calc on gpu
-	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
-	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
-	vec3 B = calcB(vec3(phi, lambda, 0.));
-#else //using the generated texture	
-	vec3 B = texture2D(Btex, texcoordv).rgb;
-#endif
+	
+	vec4 B = texture2D(Btex, texcoordv);
+	vec4 B2 = texture2D(B2tex, texcoordv);
 
 	<?=overlay.code?>
 	
@@ -984,15 +1088,17 @@ void main() {
 ]], 		{
 				overlay = overlay,
 				BStat = BStat,
-				clnumber = require 'cl.obj.number',
+				clnumber = clnumber,
 				-- for calc_b.shader:
 				wgs84 = wgs84,
 				wmm = wmm,
 			}),
 			uniforms = {
 				earthtex = 0,
-				Btex = 1,
-				hsvtex = 2,
+				hsvtex = 1,
+				Btex = 2,
+				B2tex = 3,
+				
 				alpha = 1,
 			},
 		}
@@ -1169,8 +1275,9 @@ function App:update(...)
 	shader:use()
 
 	earthtex:bind(0)
-	Btex:bind(1)
-	gradtex:bind(2)
+	gradtex:bind(1)
+	Btex:bind(2)
+	B2tex:bind(3)
 
 	gl.glUniform1f(shader.uniforms.alpha.loc, 1)
 
@@ -1203,13 +1310,12 @@ function App:update(...)
 	gl.glCullFace(gl.GL_BACK)
 	geom:draw()
 
-	gradtex:unbind(2)
-	Btex:unbind(1)
+	B2tex:unbind(3)
+	Btex:unbind(2)
+	gradtex:unbind(1)
 	earthtex:unbind(0)
 	
 	shader:useNone()
-
-	
 
 	glreport'here'
 
