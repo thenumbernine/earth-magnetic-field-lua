@@ -26,7 +26,7 @@ wgs84.re = 6371.2 -- Earth's radius
 local londim = 1440	-- dimension in 2D x dir / spherical phi / globe lambda dir
 local latdim = 720	-- dimension in 2D y dir / spherical theta / globe phi dir
 local HeightAboveEllipsoid = 0		-- compute at z=0 for now
-local year = 2020
+local year = 2020	-- TODO add support for dg/dh
 
 
 
@@ -64,30 +64,29 @@ end
 
 local nMax = #wmm
 
-
-
-local function calcB(phi, lambda, HeightAboveEllipsoid)
+local function calcB(phi, lambda, height)
 
 	-- begin MAG_GeodeticToSpherical
-	local CosLat = math.cos(phi)
-	local SinLat = math.sin(phi)
+	local cosPhi = math.cos(phi)
+	local sinPhi = math.sin(phi)
 
 	-- convert from geodetic WGS-84 to spherical coordiantes
-	local rc = wgs84.a / math.sqrt(1 - wgs84.epssq * SinLat * SinLat)
-	local xp = (rc + HeightAboveEllipsoid) * CosLat
-	local zp = (rc * (1 - wgs84.epssq) + HeightAboveEllipsoid) * SinLat
+	local rc = wgs84.a / math.sqrt(1 - wgs84.epssq * sinPhi * sinPhi)
+	local xp = (rc + height) * cosPhi
+	local zp = (rc * (1 - wgs84.epssq) + height) * sinPhi
 	
 	-- spherical results:
 	local r = math.sqrt(xp * xp + zp * zp)
-	local phig = math.asin(zp / r) -- geocentric latitude 
+	local sinPhiSph = zp / r	-- geocentric latitude sin & cos
+	local cosPhiSph = math.sqrt(1 - sinPhiSph * sinPhiSph)
 	-- longitude is the same 
 	-- end MAG_GeodeticToSpherical
 
 	-- begin MAG_Geomag
 	-- begin MAG_ComputeSphericalHarmonicVariables
 
-	local cos_lambda = math.cos(lambda)
-	local sin_lambda = math.sin(lambda)
+	local cosLambda = math.cos(lambda)
+	local sinLambda = math.sin(lambda)
 	
 	local RelativeRadiusPower = {}	-- 0-nmake
 	RelativeRadiusPower[0] = (wgs84.re / r) * (wgs84.re / r)
@@ -95,30 +94,27 @@ local function calcB(phi, lambda, HeightAboveEllipsoid)
 		RelativeRadiusPower[n] = RelativeRadiusPower[n-1] * (wgs84.re / r)
 	end
 
-	local cos_mlambda = {[0] = 1, cos_lambda}
-	local sin_mlambda = {[0] = 0, sin_lambda}
+	local cosLambdaToTheM = {[0] = 1, cosLambda}
+	local sinLambdaToTheM = {[0] = 0, sinLambda}
 
 	-- looks like exp(i lambda)
 	for m=2,nMax do
-		cos_mlambda[m] = cos_mlambda[m-1] * cos_lambda - sin_mlambda[m-1] * sin_lambda
-		sin_mlambda[m] = cos_mlambda[m-1] * sin_lambda + sin_mlambda[m-1] * cos_lambda
+		cosLambdaToTheM[m] = cosLambdaToTheM[m-1] * cosLambda - sinLambdaToTheM[m-1] * sinLambda
+		sinLambdaToTheM[m] = cosLambdaToTheM[m-1] * sinLambda + sinLambdaToTheM[m-1] * cosLambda
 	end
 	
 	-- end MAG_ComputeSphericalHarmonicVariables
 	-- begin MAG_AssociatedLegendreFunction
 
-	local sin_phi = math.sin(phig)	-- why convert to degrees?
-
 	-- begin MAG_PcupLow
 	
-	local x = sin_phi
+	local x = sinPhiSph
 	local Pcup = {[0] = 1}
 	local dPcup = {[0] = 0}
 
-	-- sin (geocentric latitude) - sin_phi
+	-- sin (geocentric latitude) - sinPhiSph
 	local z = math.sqrt((1 - x) * (1 + x));
 
-	local NumTerms = ((nMax + 1) * (nMax + 2) / 2)
 	local schmidtQuasiNorm = {}
 
 	--	 First,	Compute the Gauss-normalized associated Legendre  functions
@@ -140,7 +136,7 @@ local function calcB(phi, lambda, HeightAboveEllipsoid)
 					Pcup[index] = x * Pcup[index2]
 					dPcup[index] = x * dPcup[index2] - z * Pcup[index2]
 				else
-					k = (((n - 1) * (n - 1)) - (m * m)) / ((2 * n - 1) * (2 * n - 3))
+					local k = (((n - 1) * (n - 1)) - (m * m)) / ((2 * n - 1) * (2 * n - 3))
 					Pcup[index] = x * Pcup[index2] - k * Pcup[index1]
 					dPcup[index] = x * dPcup[index2] - z * Pcup[index2] - k * dPcup[index1]
 				end
@@ -198,8 +194,8 @@ local function calcB(phi, lambda, HeightAboveEllipsoid)
 			Bz = Bz - 
 				RelativeRadiusPower[n]
 				* (
-					wmm_n_m.g * cos_mlambda[m] 
-					+ wmm_n_m.h * sin_mlambda[m]
+					wmm_n_m.g * cosLambdaToTheM[m] 
+					+ wmm_n_m.h * sinLambdaToTheM[m]
 				)
 				* (n + 1) * Pcup[index]
 
@@ -210,8 +206,8 @@ local function calcB(phi, lambda, HeightAboveEllipsoid)
 			By = By + (
 				RelativeRadiusPower[n]
 				* (
-					wmm_n_m.g * sin_mlambda[m] 
-					- wmm_n_m.h * cos_mlambda[m]
+					wmm_n_m.g * sinLambdaToTheM[m] 
+					- wmm_n_m.h * cosLambdaToTheM[m]
 				)
 				* m * Pcup[index]
 			)
@@ -222,16 +218,15 @@ local function calcB(phi, lambda, HeightAboveEllipsoid)
 			Bx = Bx - 
 				RelativeRadiusPower[n] *
 				(
-					wmm_n_m.g * cos_mlambda[m]
-					+ wmm_n_m.h * sin_mlambda[m]
+					wmm_n_m.g * cosLambdaToTheM[m]
+					+ wmm_n_m.h * sinLambdaToTheM[m]
 				)
 				* dPcup[index]
 		end
 	end
 
-	local cos_phi = math.cos(phig)
-	if math.abs(cos_phi) > 1e-10 then
-		By = By / cos_phi;
+	if cosPhiSph < -1e-10 or cosPhiSph > 1e-10 then
+		By = By / cosPhiSph
 	else
 		-- Special calculation for component - By - at Geographic poles.
 		-- If the user wants to avoid using this function,  please make sure that
@@ -259,7 +254,7 @@ local function calcB(phi, lambda, HeightAboveEllipsoid)
 				PcupS[n] = PcupS[n-1]
 			else
 				local k =  (((n - 1) * (n - 1)) - 1) /  ((2 * n - 1) * (2 * n - 3))
-				PcupS[n] = sin_phi * PcupS[n - 1] - k * PcupS[n - 2]
+				PcupS[n] = sinPhiSph * PcupS[n - 1] - k * PcupS[n - 2]
 			end
 
 			--		  1 nMax  (n+2)    n     m            m           m
@@ -269,8 +264,8 @@ local function calcB(phi, lambda, HeightAboveEllipsoid)
 			By = By + 
 				RelativeRadiusPower[n] *
 				(
-					wmm_n_m.g * sin_mlambda[1] -
-					wmm_n_m.h * cos_mlambda[1])
+					wmm_n_m.g * sinLambdaToTheM[1] -
+					wmm_n_m.h * cosLambdaToTheM[1])
 					* PcupS[n] * schmidtQuasiNorm3
 		end
 
@@ -329,8 +324,8 @@ else
 end
 
 
--- latitude = phi in [-90,90] but in radians
--- longitude = lambda in [-180,180] but in radians
+-- latitude = phi in [-pi/2, pi/2]
+-- longitude = lambda in [-pi,pi]
 -- returns xyz cartesian coordinates in units of the wgs84's 'a' parameter
 local function latLonToCartesianWGS84(phi, lambda, height)
 	local cosLambda = math.cos(lambda)
@@ -424,7 +419,7 @@ do
 	
 	local r2D = sym.sqrt(xp * xp + zp * zp)
 	local phiSph = sym.asin(zp / r2D)
-	-- TODO check domain and see if you can just use zp/r2D and sqrt(1-sin_phi^2)
+	-- TODO check domain and see if you can just use zp/r2D and sqrt(1-sinPhiSph^2)
 	local cosPhiSph = sym.cos(phiSph)
 	local sinPhiSph = sym.sin(phiSph)
 
@@ -570,16 +565,25 @@ local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
 App.title = 'EM field' 
 
-local geomIndex = ffi.new('int[1]', 0)
+local geomIndex = ffi.new('int[1]', 1)	-- north pole
 local overlayIndex = ffi.new('int[1]', 1)
 local gradientIndex = ffi.new('int[1]', 0)
 
-local function defaultDrawForChart(self)
-	local HeightAboveEllipsoid = 0
+
+local Geom = class()
+
+function Geom:init(args)
+	for k,v in pairs(args) do
+		self[k] = v
+	end
+end
+
+function Geom:draw()
+	local height = 0
 	local jres = 120
 	local ires = 60
-	self.list = self.list or {}
-	glCallOrRun(self.list, function()
+	--self.list = self.list or {}
+	--glCallOrRun(self.list, function()
 		for ibase=0,ires-1 do
 			gl.glBegin(gl.GL_TRIANGLE_STRIP)
 			for j=0,jres do
@@ -590,18 +594,26 @@ local function defaultDrawForChart(self)
 					local u = i/ires
 					local phi = math.rad((u * 2 - 1) * 90)
 					
-					local x,y,z = self:chart(phi, lambda, HeightAboveEllipsoid)
+					local x,y,z = self:chart(phi, lambda, height)
 					gl.glTexCoord2f(v, u)
 					gl.glVertex3f(x, y, z)
 				end
 			end
 			gl.glEnd()
 		end
-	end)
+	--end)
+end
+
+local float = ffi.new'float[1]'
+local function inputTableFloat(name, t, k, ...)
+	float[0] = assert(tonumber(t[k]))
+	if ig.igInputFloat(name, float, ...) then
+		t[k] = float[0]
+	end
 end
 
 local geoms = {
-	{
+	Geom{
 		name = '2D',
 		chart = function(self, phi, lambda, height) 
 			return lambda*2/math.pi, phi*2/math.pi, height / wgs84.a
@@ -622,7 +634,7 @@ local geoms = {
 			gl.glEnd()
 		end,
 	},
-	{
+	Geom{
 		name = 'North Pole',
 		chart = function(self, phi, lambda, height) 
 			local theta = .5 * math.pi - phi
@@ -635,14 +647,45 @@ local geoms = {
 			local cosLambda = math.cos(lambda)
 			local sinLambda = math.sin(lambda)
 			return 
-				vec3f(-cosLambda, -sinLambda, 0),
-				vec3f(-sinLambda, cosLambda, 0),
+				vec3f(-cosLambda, -sinLambda, 0),	-- d/dphi
+				vec3f(-sinLambda, cosLambda, 0),	-- d/dlambda
+				vec3f(0, 0, -1)						-- d/dheight
+		end,
+	},
+	Geom{
+		name = 'Mollweide',
+		R = math.pi / 4,
+		lambda0 = 0,	-- in degrees
+		updateGUI = function(self)
+			inputTableFloat('R', self, 'R')
+			inputTableFloat('lambda0', self, 'lambda0')
+		end,
+		chart = function(self, phi, lambda, height)
+			local theta = phi
+			for i=1,10 do
+				local dtheta = (2 * theta + math.sin(2 * theta) - math.pi * math.sin(phi)) / (2 + 2 * math.cos(theta))
+				if math.abs(dtheta) < 1e-5 then break end
+				theta = theta - dtheta
+			end
+			
+			lambda = lambda - math.rad(self.lambda0)
+			--[[ dumb and not working
+			while lambda > math.pi do lambda = lambda - 2*math.pi end
+			while lambda < -math.pi do lambda = lambda + 2*math.pi end
+			--]]
+
+			local x = self.R * math.sqrt(8) / math.pi * lambda * math.cos(theta)
+			local y = self.R * math.sqrt(2) * math.sin(theta)
+			return x, y, height / wgs84.a
+		end,
+		basis = function(self, phi, lambda, height)
+			return 
+				vec3f(0, 1, 0),
+				vec3f(1, 0, 0),
 				vec3f(0, 0, -1)
 		end,
-		draw = defaultDrawForChart,
 	},
-
-	{
+	Geom{
 		name = '3D',
 		chart = function(self, phi, lambda, height)
 			return latLonToCartesianWGS84(phi, lambda, height)
@@ -650,7 +693,6 @@ local geoms = {
 		basis = function(self, phi, lambda, height)
 			return latLonToCartesianTangentSpaceWGS84(phi, lambda, height)
 		end,
-		draw = defaultDrawForChart,
 	},
 }
 
@@ -781,13 +823,35 @@ function App:initGL(...)
 	for _,overlay in ipairs(overlays) do
 		overlay.shader = GLProgram{
 			vertexCode = [[
-varying vec2 tc;
+varying vec2 texcoordv;
+
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+
 void main() {
-	tc = gl_MultiTexCoord0.xy;
+	texcoordv = gl_MultiTexCoord0.xy;
 	gl_Position = ftransform();
 }
 ]],
-			fragmentCode = template([[
+			fragmentCode = template(
+[[
+#version 120
+
+#ifdef CALC_B_ON_GPU
+]]
+..
+template(
+	file['calc_b.shader'],
+	{
+		wgs84 = wgs84,
+		wmm = wmm,
+	}
+)
+..
+[[
+#endif	//CALC_B_ON_GPU
+
+
 #define BMagMin <?=clnumber(BStat.mag.min)?>
 #define BMagMax <?=clnumber(BStat.mag.max)?>
 #define BMag2DMin <?=clnumber(BStat.mag2d.min)?>
@@ -800,7 +864,7 @@ void main() {
 #define BzMax <?=clnumber(BStat.z.max)?>
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
-varying vec2 tc;
+varying vec2 texcoordv;
 
 uniform sampler2D earthtex;
 uniform sampler2D Btex;
@@ -810,10 +874,18 @@ uniform float alpha;
 void main() {
 	float s = .5;
 	float hsvBlend = .5;
-	vec3 B = texture2D(Btex, tc).rgb;
+
+#ifdef CALC_B_ON_GPU //calc on gpu
+	float phi = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
+	float lambda = (texcoordv.y - .5) * M_PI;	//[-pi/2, pi/2]
+	vec3 B = calcB(vec3(phi, lambda, 0.));
+#else //using the generated texture	
+	vec3 B = texture2D(Btex, texcoordv).rgb;
+#endif
+
 	<?=overlay.code?>
 	gl_FragColor = mix(
-		texture2D(earthtex, vec2(tc.x, 1. - tc.y)),
+		texture2D(earthtex, vec2(texcoordv.x, 1. - texcoordv.y)),
 		texture1D(hsvtex, s),
 		hsvBlend);
 	gl_FragColor.a = alpha;
@@ -940,7 +1012,7 @@ local function drawVectorField(geom)
 		{.5, 0.},
 	}
 
-	local HeightAboveEllipsoid = 0
+	local height = 0
 	local jres = 60
 	local ires = 30
 	local scale = 10 / (BStat.mag.max * jres)
@@ -956,12 +1028,12 @@ local function drawVectorField(geom)
 			local x,y,z = geom:chart(phi, lambda, 0)
 			gl.glTexCoord2f(u,v)
 			-- TODO calc B here, and add here
-			local Bx, By, Bz = calcB(phi, lambda, HeightAboveEllipsoid)
+			local Bx, By, Bz = calcB(phi, lambda, height)
 			Bx = Bx * scale	-- north component
 			By = By * scale	-- east component
 			Bz = Bz * scale	-- down component
 			
-			local ex, ey, ez = geom:basis(phi, lambda, HeightAboveEllipsoid)
+			local ex, ey, ez = geom:basis(phi, lambda, height)
 
 			--[[ verify the basis is correct
 			scale = 3 / jres
@@ -1065,6 +1137,13 @@ function App:updateGUI()
 	ig.igText'geom'
 	for i,geom in ipairs(geoms) do
 		ig.igRadioButtonIntPtr(geom.name, geomIndex, i-1)
+	end
+
+	ig.igSeparator()
+
+	local geom = assert(geoms[tonumber(geomIndex[0])+1])
+	if geom.updateGUI then
+		geom:updateGUI()
 	end
 
 	ig.igSeparator()
