@@ -9,19 +9,6 @@ end
 #define nMax		<?=nMax?>
 #define numTerms 	((nMax + 1) * (nMax + 2) / 2)
 
-//for nMax == 12, numTerms == 91
-const vec2 wmm[numTerms] = vec2[numTerms](
-	vec2(0., 0.)	//n==0 is not used, but here for storage
-<? 
-for n=1,nMax do
-	for m=0,n do
-		local wmm_n_m = wmm[n][m]
-?>	,vec2(<?=clnumber(wmm_n_m.g)?>, <?=clnumber(wmm_n_m.h)?>)
-<?
-	end
-end 
-?>);
-
 vec2 cplxmul(vec2 a, vec2 b) {
 	return vec2(
 		a.x * b.x - a.y * b.y,
@@ -163,15 +150,19 @@ vec3 calcB(vec3 plh) {
 	vec3 B = vec3(0., 0., 0.);
 	{
 		float earthRadOverRToTheN = earthRadOverR * earthRadOverR;
-		for (int n=1; n <= nMax; ++n) {
+	
+		<? for n=1,nMax do ?>{
 			earthRadOverRToTheN *= earthRadOverR;
-			for (int m=0; m <= n; ++m) {
-				int index = (n * (n + 1) / 2 + m);
+			<? for m=0,n do ?>{
+				<? local index = (n * (n + 1) / 2 + m) ?>
 				
 				//.g .h .gt .ht == .xyzw
 				// then again, looks like I'm not doing any gt/ht calculations... 
 				// that means my reading is strictly 2020, right?
-				vec2 wmm_n_m = wmm[index];	//[n][m]
+				vec2 wmm_n_m = vec2(
+					<?=clnumber(wmm[n][m].g)?>,
+					<?=clnumber(wmm[n][m].h)?>
+				);
 
 				//		    nMax  	(n+2) 	  n     m            m           m
 				//		Bz =   -SUM (a/r)   (n+1) SUM  [g cos(m p) + h sin(m p)] P (sin(phi))
@@ -180,10 +171,10 @@ vec3 calcB(vec3 plh) {
 				B.z -=
 					earthRadOverRToTheN
 					* (
-						wmm_n_m.x * cisLambdaToTheM[m].x
-						+ wmm_n_m.y * cisLambdaToTheM[m].y
+						wmm_n_m.x * cisLambdaToTheM[<?=m?>].x
+						+ wmm_n_m.y * cisLambdaToTheM[<?=m?>].y
 					)
-					* (n + 1) * Pcup[index];
+					* <?=clnumber(n + 1)?> * Pcup[<?=index?>];
 
 				//		  1 nMax  (n+2)    n     m            m           m
 				//		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
@@ -192,10 +183,10 @@ vec3 calcB(vec3 plh) {
 				B.y += 
 					earthRadOverRToTheN
 					* (
-						wmm_n_m.x * cisLambdaToTheM[m].y
-						- wmm_n_m.y * cisLambdaToTheM[m].x
+						wmm_n_m.x * cisLambdaToTheM[<?=m?>].y
+						- wmm_n_m.y * cisLambdaToTheM[<?=m?>].x
 					)
-					* float(m) * Pcup[index];
+					* <?=clnumber(m)?> * Pcup[<?=index?>];
 				//		   nMax  (n+2) n     m            m           m
 				//		Bx = - SUM (a/r)   SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
 				//				   n=1         m=0   n            n           n  */
@@ -203,12 +194,12 @@ vec3 calcB(vec3 plh) {
 				B.x -=
 					earthRadOverRToTheN *
 					(
-						wmm_n_m.x * cisLambdaToTheM[m].x
-						+ wmm_n_m.y * cisLambdaToTheM[m].y
+						wmm_n_m.x * cisLambdaToTheM[<?=m?>].x
+						+ wmm_n_m.y * cisLambdaToTheM[<?=m?>].y
 					)
-					* dPcup[index];
-			}
-		}
+					* dPcup[<?=index?>];
+			}<? end ?>
+		}<? end ?>
 	}
 
 	if (cisPhiSph.x < -1e-10 || cisPhiSph.x > 1e-10) {
@@ -222,30 +213,36 @@ vec3 calcB(vec3 plh) {
 
 		float PcupS[numTerms];
 		PcupS[0] = 1.;
-		float schmidtQuasiNorm1 = 1.;
 
 		B.y = 0.;
 
 		float earthRadOverRToTheN = earthRadOverR * earthRadOverR;
-		for (int n=1; n <= nMax; ++n) {
+		<? 
+		local schmidtQuasiNorm1 = 1
+		for n=1,nMax do ?>{
 			earthRadOverRToTheN *= earthRadOverR;
 			
 			//Compute the ration between the Gauss-normalized associated Legendre
 			// functions and the Schmidt quasi-normalized version. This is equivalent to
 			// sqrt((m==0?1:2)*(n-m)!/(n+m!))*(2n-1)!!/(n-m)! */
-			const int m = 1;
-			int index = n * (n + 1) / 2 + m;
-			vec2 wmm_n_m = wmm[index];
-			
-			float schmidtQuasiNorm2 = schmidtQuasiNorm1 * float(2 * n - 1) / float(n);
-			float schmidtQuasiNorm3 = schmidtQuasiNorm2 * sqrt( float(n * 2) / float(n + 1));
-			float schmidtQuasiNorm1 = schmidtQuasiNorm2;
-			if (n == 1) {
-				PcupS[n] = PcupS[n-1];
-			} else {
-				float k = float(((n - 1) * (n - 1)) - 1) / float((2 * n - 1) * (2 * n - 3));
-				PcupS[n] = cisPhiSph.y * PcupS[n - 1] - k * PcupS[n - 2];
-			}
+			<? local m = 1 ?>
+			<? local index = n * (n + 1) / 2 + m ?>
+			vec2 wmm_n_m = vec2(
+				<?=clnumber(wmm[n][m].g)?>,
+				<?=clnumber(wmm[n][m].h)?>
+			);
+
+			<?
+			local schmidtQuasiNorm2 = schmidtQuasiNorm1 * (2 * n - 1) / n
+			local schmidtQuasiNorm3 = schmidtQuasiNorm2 * math.sqrt((n * 2) / (n + 1))
+			local schmidtQuasiNorm1 = schmidtQuasiNorm2
+			if n == 1 then ?>
+				PcupS[<?=n?>] = PcupS[<?=n-1?>];
+			<? else 
+				local k = (((n - 1) * (n - 1)) - 1) / ((2 * n - 1) * (2 * n - 3))
+			?>
+				PcupS[<?=n?>] = cisPhiSph.y * PcupS[<?=n-1?>] - <?=clnumber(k)?> * PcupS[<?=n-2?>];
+			<? end ?>
 
 			//		  1 nMax  (n+2)    n     m            m           m
 			//		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
@@ -256,8 +253,8 @@ vec3 calcB(vec3 plh) {
 				* (
 					wmm_n_m.x * cisLambdaToTheM[1].y
 					- wmm_n_m.y * cisLambdaToTheM[1].x
-				) * PcupS[n] * schmidtQuasiNorm3;
-		}
+				) * PcupS[<?=n?>] * <?=clnumber(schmidtQuasiNorm3)?>;
+		}<? end ?>
 
 		// end MAG_SummationSpecial	
 	}
