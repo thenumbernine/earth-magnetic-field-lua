@@ -64,12 +64,6 @@ vec3 calcB(vec3 plh) {
 
 	float earthRadOverR = wgs84_re * invR;
 
-	float RelativeRadiusPower[nMax+1];	// 0-nmake
-	RelativeRadiusPower[0] = earthRadOverR * earthRadOverR;
-	for (int n = 1; n <= nMax; ++n) {
-		RelativeRadiusPower[n] = RelativeRadiusPower[n-1] * earthRadOverR;
-	}
-
 	vec2 cisLambdaToTheM[nMax+1];
 	cisLambdaToTheM[0] = vec2(1., 0.);
 	cisLambdaToTheM[1] = cisLambda;
@@ -156,49 +150,53 @@ vec3 calcB(vec3 plh) {
 	// begin MAG_Summation 
 
 	vec3 B = vec3(0., 0., 0.);
-	for (int n=1; n <= nMax; ++n) {
-		for (int m=0; m <= n; ++m) {
-			int index = (n * (n + 1) / 2 + m);
-			
-			//.g .h .gt .ht == .xyzw
-			// then again, looks like I'm not doing any gt/ht calculations... 
-			// that means my reading is strictly 2020, right?
-			vec2 wmm_n_m = wmm[index];	//[n][m]
+	{
+		float earthRadOverRToTheN = earthRadOverR * earthRadOverR;
+		for (int n=1; n <= nMax; ++n) {
+			earthRadOverRToTheN *= earthRadOverR;
+			for (int m=0; m <= n; ++m) {
+				int index = (n * (n + 1) / 2 + m);
+				
+				//.g .h .gt .ht == .xyzw
+				// then again, looks like I'm not doing any gt/ht calculations... 
+				// that means my reading is strictly 2020, right?
+				vec2 wmm_n_m = wmm[index];	//[n][m]
 
-			//		    nMax  	(n+2) 	  n     m            m           m
-			//		Bz =   -SUM (a/r)   (n+1) SUM  [g cos(m p) + h sin(m p)] P (sin(phi))
-			//						n=1      	      m=0   n            n           n  */
-			// Equation 12 in the WMM Technical report.  Derivative with respect to radius.*/
-			B.z -=
-				RelativeRadiusPower[n]
-				* (
-					wmm_n_m.x * cisLambdaToTheM[m].x
-					+ wmm_n_m.y * cisLambdaToTheM[m].y
-				)
-				* (n + 1) * Pcup[index];
+				//		    nMax  	(n+2) 	  n     m            m           m
+				//		Bz =   -SUM (a/r)   (n+1) SUM  [g cos(m p) + h sin(m p)] P (sin(phi))
+				//						n=1      	      m=0   n            n           n  */
+				// Equation 12 in the WMM Technical report.  Derivative with respect to radius.*/
+				B.z -=
+					earthRadOverRToTheN
+					* (
+						wmm_n_m.x * cisLambdaToTheM[m].x
+						+ wmm_n_m.y * cisLambdaToTheM[m].y
+					)
+					* (n + 1) * Pcup[index];
 
-			//		  1 nMax  (n+2)    n     m            m           m
-			//		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
-			//				   n=1             m=0   n            n           n  */
-			// Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius. */
-			B.y += 
-				RelativeRadiusPower[n]
-				* (
-					wmm_n_m.x * cisLambdaToTheM[m].y
-					- wmm_n_m.y * cisLambdaToTheM[m].x
-				)
-				* float(m) * Pcup[index];
-			//		   nMax  (n+2) n     m            m           m
-			//		Bx = - SUM (a/r)   SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
-			//				   n=1         m=0   n            n           n  */
-			// Equation 10  in the WMM Technical report. Derivative with respect to latitude, divided by radius. */
-			B.x -=
-				RelativeRadiusPower[n] *
-				(
-					wmm_n_m.x * cisLambdaToTheM[m].x
-					+ wmm_n_m.y * cisLambdaToTheM[m].y
-				)
-				* dPcup[index];
+				//		  1 nMax  (n+2)    n     m            m           m
+				//		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
+				//				   n=1             m=0   n            n           n  */
+				// Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius. */
+				B.y += 
+					earthRadOverRToTheN
+					* (
+						wmm_n_m.x * cisLambdaToTheM[m].y
+						- wmm_n_m.y * cisLambdaToTheM[m].x
+					)
+					* float(m) * Pcup[index];
+				//		   nMax  (n+2) n     m            m           m
+				//		Bx = - SUM (a/r)   SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
+				//				   n=1         m=0   n            n           n  */
+				// Equation 10  in the WMM Technical report. Derivative with respect to latitude, divided by radius. */
+				B.x -=
+					earthRadOverRToTheN *
+					(
+						wmm_n_m.x * cisLambdaToTheM[m].x
+						+ wmm_n_m.y * cisLambdaToTheM[m].y
+					)
+					* dPcup[index];
+			}
 		}
 	}
 
@@ -217,7 +215,10 @@ vec3 calcB(vec3 plh) {
 
 		B.y = 0.;
 
+		float earthRadOverRToTheN = earthRadOverR * earthRadOverR;
 		for (int n=1; n <= nMax; ++n) {
+			earthRadOverRToTheN *= earthRadOverR;
+			
 			//Compute the ration between the Gauss-normalized associated Legendre
 			// functions and the Schmidt quasi-normalized version. This is equivalent to
 			// sqrt((m==0?1:2)*(n-m)!/(n+m!))*(2n-1)!!/(n-m)! */
@@ -240,8 +241,8 @@ vec3 calcB(vec3 plh) {
 			//				   n=1             m=0   n            n           n  */
 			// Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius. */
 			B.y += 
-				RelativeRadiusPower[n] *
-				(
+				earthRadOverRToTheN
+				* (
 					wmm_n_m.x * cisLambdaToTheM[1].y
 					- wmm_n_m.y * cisLambdaToTheM[1].x
 				) * PcupS[n] * schmidtQuasiNorm3;

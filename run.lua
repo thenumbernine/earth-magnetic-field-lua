@@ -579,9 +579,21 @@ end
 
 local geoms = {
 	Geom{
-		name = '2D',
+		name = 'Equirectangular',
+		R = 2/math.pi,
+		lambda0 = 0,
+		phi0 = 0,
+		phi1 = 0,
+		updateGUI = function(self)
+			inputTableFloat('R', self, 'R')
+			inputTableFloat('lambda0', self, 'lambda0')
+			inputTableFloat('phi0', self, 'phi0')
+			inputTableFloat('phi1', self, 'phi1')
+		end,
 		chart = function(self, phi, lambda, height) 
-			return lambda*2/math.pi, phi*2/math.pi, height / wgs84.a
+			return self.R * (lambda - self.lambda0) * math.cos(self.phi1),
+				self.R * (phi - self.phi0),
+				height / wgs84.a
 		end,
 		basis = function(self, phi, lambda, height)
 			-- Bx is north, By is east, Bz is down ... smh
@@ -600,7 +612,7 @@ local geoms = {
 		end,
 	},
 	Geom{
-		name = 'North Pole',
+		name = 'Azimuthal equidistant',
 		chart = function(self, phi, lambda, height) 
 			local theta = .5 * math.pi - phi
 			return 
@@ -651,7 +663,7 @@ local geoms = {
 		end,
 	},
 	Geom{
-		name = '3D',
+		name = 'WGS84',
 		chart = function(self, phi, lambda, height)
 			return latLonToCartesianWGS84(phi, lambda, height)
 		end,
