@@ -998,6 +998,18 @@ glreport'here'
 		B2tex:unbind()
 glreport'here'
 
+		local statgens = table{
+			function(B, B2) return B:length() end,
+			function(B, B2) return B.x end,
+			function(B, B2) return B.y end,
+			function(B, B2) return B.z end,
+			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y) end,
+			function(B, B2) return B2.x end,
+			function(B, B2) return B2.y end,
+			function(B, B2) return B2.z end,
+			function(B, B2) return B2.w end,
+		}
+
 		for j=0,latdim-1 do
 			for i=0,londim-1 do
 				local e = i + londim * j
@@ -1005,26 +1017,63 @@ glreport'here'
 				local B2 = B2data[e]
 				local Bmag = B:length()
 				BStat:accum(
-					B:length(),
-					B.x,
-					B.y,
-					B.z,
-					math.sqrt(B.x*B.x + B.y*B.y),
-					B2.x,
-					B2.y,
-					B2.z,
-					B2.w
+					statgens:mapi(function(f)
+						return f(B, B2)
+					end):unpack()
 				)
 			end
 		end
 
 		print('BStat')
 		print(BStat)
+
+--[==[	-- plotting the bins
+		local Bin = require 'stat.bin'
+	
+		local binCount = 100
+		local bins = table.mapi(BStat, function(stat,k)
+			return Bin(
+				math.max(stat.min, stat.avg - 3*stat.stddev),
+				math.min(stat.max, stat.avg + 3*stat.stddev),
+				binCount
+			)
+		end)
+		for j=0,latdim-1 do
+			for i=0,londim-1 do
+				local e = i + londim * j
+				local B = Bdata[e]
+				local B2 = B2data[e]
+				local Bmag = B:length()
+				for i=1,#bins do
+					local stat = BStat[i]
+					local v = statgens[i](B, B2)
+					if v >= stat.avg - 3*stat.stddev and v <= stat.avg + 3*stat.stddev then
+						bins[i]:accum(v)
+					end
+				end
+			end
+		end
+		for i,bin in ipairs(bins) do
+			file['tmp.txt'] = bin:getTextData()
+			require 'gnuplot'{
+				title = BStat[i].name,
+				terminal = 'png size 1024,768',
+				output = BStat[i].name..'.png',
+				{using='1:2', datafile = 'tmp.txt'},
+			}
+		end
+--]==]
+
+		-- clamp in the min/max to 3 stddev
+		for i=1,#BStat do
+			local stat = BStat[i]
+			stat.min = math.max(stat.min, stat.avg - 3*stat.stddev)
+			stat.max = math.min(stat.max, stat.avg + 3*stat.stddev)
+		end
 --]=]
 	end
 
 	glreport'here'
-
 
 
 	for _,overlay in ipairs(overlays) do
