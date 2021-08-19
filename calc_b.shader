@@ -49,11 +49,13 @@ vec3 calcB(vec3 plh) {
 	) * cisPhi;
 	
 	// spherical results:
-	float r = length(xzp);
-	float invR = 1. / r;
+	
+	float invR = 1. / length(xzp);
+	
 	vec2 cisPhiSph;
 	cisPhiSph.y = xzp.y * invR;	// geocentric latitude sin & cos
 	cisPhiSph.x = sqrt(1. - cisPhiSph.y * cisPhiSph.y);
+	
 	// longitude is the same 
 	// end MAG_GeodeticToSpherical
 
@@ -62,13 +64,10 @@ vec3 calcB(vec3 plh) {
 
 	vec2 cisLambda = vec2(cos(plh.y), sin(plh.y));
 
-	float earthRadOverR = wgs84_re * invR;
-
 	vec2 cisLambdaToTheM[nMax+1];
 	cisLambdaToTheM[0] = vec2(1., 0.);
 	cisLambdaToTheM[1] = cisLambda;
 
-	// looks like exp(i lambda)
 	for (int m=2; m <= nMax; ++m) {
 		cisLambdaToTheM[m] = cplxmul(cisLambdaToTheM[m-1], cisLambda);
 	}
@@ -78,76 +77,88 @@ vec3 calcB(vec3 plh) {
 
 	// begin MAG_PcupLow
 	
-	float x = cisPhiSph.y;
 	float Pcup[numTerms];
-	Pcup[0] = 1.;
 	float dPcup[numTerms];
+	Pcup[0] = 1.;
 	dPcup[0] = 0.;
+<? 
+	--	 First,	Compute the Gauss-normalized associated Legendre functions
+	
+	for n=1,nMax do 
+		for m=0,n do
+			local index = n * (n + 1) / 2 + m
+			if n == m then
+				local index1 = (n - 1) * n / 2 + m - 1
+?>	Pcup[<?=index?>] = cisPhiSph.x * Pcup[<?=index1?>];
+	dPcup[<?=index?>] = cisPhiSph.x * dPcup[<?=index1?>] + cisPhiSph.y * Pcup[<?=index1?>];
+<?			
+			elseif n == 1 and m == 0 then
+				local index1 = (n - 1) * n / 2 + m
+?>	Pcup[<?=index?>] = cisPhiSph.y * Pcup[<?=index1?>];
+	dPcup[<?=index?>] = cisPhiSph.y * dPcup[<?=index1?>] - cisPhiSph.x * Pcup[<?=index1?>];
+<?			
+			elseif n > 1 and n ~= m then
+				local index1 = (n - 2) * (n - 1) / 2 + m
+				local index2 = (n - 1) * n / 2 + m
+				if m > n - 2 then
+?>					
+	Pcup[<?=index?>] = cisPhiSph.y * Pcup[<?=index2?>];
+	dPcup[<?=index?>] = cisPhiSph.y * dPcup[<?=index2?>] - cisPhiSph.x * Pcup[<?=index2?>];
+<?				
+				else
+					local k = (((n - 1) * (n - 1)) - (m * m)) / ((2 * n - 1) * (2 * n - 3))
+?>	Pcup[<?=index?>] = cisPhiSph.y * Pcup[<?=index2?>] - <?=k?> * Pcup[<?=index1?>];
+	dPcup[<?=index?>] = cisPhiSph.y * dPcup[<?=index2?>] - cisPhiSph.x * Pcup[<?=index2?>] - <?=k?> * dPcup[<?=index1?>];
+<?
+				end
+			end
+		end
+	end
+	
+	-- Compute the ration between the the Schmidt quasi-normalized associated Legendre
+	-- functions and the Gauss-normalized version.
 
-	// sin (geocentric latitude) - cisPhiSph.y
-	float z = sqrt((1. - x) * (1. + x));
-
-	//	 First,	Compute the Gauss-normalized associated Legendre functions
-	for (int n=1; n <= nMax; ++n) {
-		for (int m=0; m <= n; ++m) {
-			int index = n * (n + 1) / 2 + m;
-			if (n == m) {
-				int index1 = (n - 1) * n / 2 + m - 1;
-				Pcup[index] = z * Pcup[index1];
-				dPcup[index] = z * dPcup[index1] + x * Pcup[index1];
-			} else if (n == 1 && m == 0) { 
-				int index1 = (n - 1) * n / 2 + m;
-				Pcup[index] = x * Pcup[index1];
-				dPcup[index] = x * dPcup[index1] - z * Pcup[index1];
-			} else if (n > 1 && n != m) {
-				int index1 = (n - 2) * (n - 1) / 2 + m;
-				int index2 = (n - 1) * n / 2 + m;
-				if (m > n - 2) {
-					Pcup[index] = x * Pcup[index2];
-					dPcup[index] = x * dPcup[index2] - z * Pcup[index2];
-				} else {
-					float k = float(((n - 1) * (n - 1)) - (m * m)) / float((2 * n - 1) * (2 * n - 3));
-					Pcup[index] = x * Pcup[index2] - k * Pcup[index1];
-					dPcup[index] = x * dPcup[index2] - z * Pcup[index2] - k * dPcup[index1];
-				}
-			}
-		}
-	}
-	// Compute the ration between the the Schmidt quasi-normalized associated Legendre
-	// functions and the Gauss-normalized version. */
-
+?>
 	float schmidtQuasiNorm[numTerms];
 	schmidtQuasiNorm[0] = 1.;
-	for (int n=1; n <= nMax; ++n) {
-		int index = (n * (n + 1) / 2);
-		int index1 = (n - 1) * n / 2;
-		// for m = 0
-		schmidtQuasiNorm[index] = schmidtQuasiNorm[index1] * (2 * n - 1) / float(n);
+<?
+	for n=1,nMax do
+		local index = (n * (n + 1) / 2)
+		local index1 = (n - 1) * n / 2
+		-- for m = 0
+?>	schmidtQuasiNorm[<?=index?>] = schmidtQuasiNorm[<?=index1?>] * (2 * <?=n?> - 1) * <?=clnumber(1 / n)?>;
+<?
+		for m=1,n do
+			local index = (n * (n + 1) / 2 + m)
+			local index1 = (n * (n + 1) / 2 + m - 1)
+?>	schmidtQuasiNorm[<?=index?>] = schmidtQuasiNorm[<?=index1?>] * <?=
+		clnumber(math.sqrt( ((n - m + 1) * (m == 1 and 2 or 1)) / (n + m)))
+	?>;
+<?
+		end
+	end
 
-		for (int m=1; m <= n; ++m) {
-			int index = (n * (n + 1) / 2 + m);
-			int index1 = (n * (n + 1) / 2 + m - 1);
-			schmidtQuasiNorm[index] = schmidtQuasiNorm[index1] * sqrt( (float(n - m + 1) * (m == 1 ? 2. : 1.)) / float(n + m));
-		}
-	}
+	-- Converts the Gauss-normalized associated Legendre
+	-- functions to the Schmidt quasi-normalized version using pre-computed
+	-- relation stored in the variable schmidtQuasiNorm
 
-	// Converts the Gauss-normalized associated Legendre
-	// functions to the Schmidt quasi-normalized version using pre-computed
-	// relation stored in the variable schmidtQuasiNorm */
-
-	for (int n=1; n <= nMax; ++n) {
-		for (int m=0; m <= n; ++m) {
-			int index = (n * (n + 1) / 2 + m);
-			Pcup[index] = Pcup[index] * schmidtQuasiNorm[index];
-			dPcup[index] = -dPcup[index] * schmidtQuasiNorm[index];
-			// The sign is changed since the new WMM routines use derivative with respect to latitude
-			// insted of co-latitude */
-		}
-	}
+	for n=1,nMax do
+		for m=0,n do
+			local index = (n * (n + 1) / 2 + m)
+?>	Pcup[<?=index?>] = Pcup[<?=index?>] * schmidtQuasiNorm[<?=index?>];
+	dPcup[<?=index?>] = -dPcup[<?=index?>] * schmidtQuasiNorm[<?=index?>];
+<?		
+			-- The sign is changed since the new WMM routines use derivative with respect to latitude
+			-- insted of co-latitude
+		end
+	end
 	
-	// end MAG_PcupLow
-	// end MAG_AssociatedLegendreFunction
-	// begin MAG_Summation 
+	-- end MAG_PcupLow
+	-- end MAG_AssociatedLegendreFunction
+	-- begin MAG_Summation 
+?>
+
+	float earthRadOverR = wgs84_re * invR;
 
 	vec3 B = vec3(0., 0., 0.);
 	{
