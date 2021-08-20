@@ -162,18 +162,34 @@ vec3 calcB(vec3 plh) {
 			--						n=1      	      m=0   n            n           n 
 			-- Equation 12 in the WMM Technical report.  Derivative with respect to radius.
 	
-?>			+ vec3(-P[<?=index?>].y, <? if m == 0 then ?>0.<? else ?>P[<?=index?>].x<? end ?>, -P[<?=index?>].x) * (mat2x3(vec3(<?=
+?>			+ vec3(-P[<?=index?>].y, <? 
+			if m == 0 then 
+				?>0.<? 
+			else 
+				?>P[<?=index?>].x<? end ?>, -P[<?=index?>].x) * (mat2x3(vec3(<?=
 						clnumber(wmm[n][m].g * -schmidtQuasiNorm[index])
-					?>, <?=
-						clnumber(m == 0 and 0 or (-wmm[n][m].h * m * schmidtQuasiNorm[index]))
-					?>, <?=
+					?> - dt * <?=
+						clnumber(wmm[n][m].dg_dt * -schmidtQuasiNorm[index])
+					?>, <? if m == 0 then ?>0.<? else ?><?=
+						clnumber(-wmm[n][m].h * m * schmidtQuasiNorm[index])
+					?> - dt * <?=
+						clnumber(wmm[n][m].dh_dt * m * schmidtQuasiNorm[index])
+					?><? end ?>, <?=
 						clnumber(wmm[n][m].g * (n + 1) * schmidtQuasiNorm[index])
+					?> - dt * <?=
+						clnumber(wmm[n][m].dg_dt * (n + 1) * schmidtQuasiNorm[index])
 					?>), vec3(<?=
 						clnumber(wmm[n][m].h * -schmidtQuasiNorm[index])
-					?>, <?=
-						clnumber(m == 0 and 0 or (wmm[n][m].g * m * schmidtQuasiNorm[index]))
-					?>, <?=
+					?> - dt * <?=
+						clnumber(wmm[n][m].dh_dt * -schmidtQuasiNorm[index])
+					?>, <? if m == 0 then ?>0.<? else ?><?=
+						clnumber(wmm[n][m].g * m * schmidtQuasiNorm[index])
+					?> - dt * <?=
+						clnumber(wmm[n][m].dg_dt * m * schmidtQuasiNorm[index])
+					?><? end ?>, <?=
 						clnumber(wmm[n][m].h * (n + 1) * schmidtQuasiNorm[index])
+					?> - dt * <?=
+						clnumber(wmm[n][m].dh_dt * (n + 1) * schmidtQuasiNorm[index])
 					?>)) * cisLambdaToTheM[<?=m?>])
 <?		end
 	end 

@@ -56,8 +56,8 @@ for _,line in ipairs(lines) do
 	wmm[n][m] = {
 		g = parts[3],
 		h = parts[4],
-		gt = parts[5],
-		ht = parts[6],
+		dg_dt = parts[5],
+		dh_dt = parts[6],
 	}
 	-- n runs 1-12
 	-- m runs 0-n
@@ -785,6 +785,7 @@ local overlays = {
 	},
 }
 
+local fieldDT = ffi.new('float[1]', 0)
 
 function App:initGL(...)
 	if App.super.initGL then
@@ -818,6 +819,8 @@ void main() {
 [[
 #version 120
 
+uniform float dt;
+
 ]]..calc_b_shader..[[
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
@@ -832,6 +835,7 @@ void main() {
 }
 ]],
 		{
+			dt = 0,
 			wgs84 = wgs84,
 			wmm = wmm,
 		}
@@ -900,6 +904,8 @@ glreport'here'
 [[
 #version 120
 
+uniform float dt;
+
 ]]..calc_b_shader..[[
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
@@ -943,10 +949,10 @@ void main() {
 				{
 					latdim = latdim,
 					londim = londim,
-					calc_b_shader = calc_b_shader,
+					clnumber = clnumber,
 					wgs84 = wgs84,
 					wmm = wmm,
-					clnumber = clnumber,
+					dt = 0,
 				}
 			)
 		}
@@ -1097,6 +1103,8 @@ glreport'here'
 [[
 #version 120
 //120 needed for mat2x3 type
+
+uniform float dt;
 
 ]]
 ..
@@ -1254,8 +1262,8 @@ void main() {
 				hsvtex = 1,
 				Btex = 2,
 				B2tex = 3,
-				
 				alpha = 1,
+				dt = 0,
 			},
 		}
 		overlay.shader:useNone() 
@@ -1430,6 +1438,10 @@ function App:update(...)
 
 	shader:use()
 
+	if shader.uniforms.dt then
+		gl.glUniform1f(shader.uniforms.dt.loc, fieldDT[0])
+	end
+
 	earthtex:bind(0)
 	gradtex:bind(1)
 	Btex:bind(2)
@@ -1534,6 +1546,11 @@ function App:updateGUI()
 	ig.igInputFloat('alpha', drawAlpha)
 	ig.igInputFloat('field z', fieldZScale)
 	ig.igInputFloat('field size', arrowScale)
+
+	-- how linear are the g and h coeffs?
+	-- can I just factor out the dt?
+	--ig.igInputFloat('time from '..wmm.epoch, fieldDT)
+	ig.igSliderFloat('time from '..wmm.epoch, fieldDT, 0, 5)
 end
 
 App():run()
