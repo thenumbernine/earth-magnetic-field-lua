@@ -122,9 +122,8 @@ vec3 calcB(vec3 plh) {
 			end
 		end
 	end
-?>
 
-<?
+--[[ bake this into the B sum
 	-- Converts the Gauss-normalized associated Legendre
 	-- functions to the Schmidt quasi-normalized version using pre-computed
 	-- relation stored in the variable schmidtQuasiNorm
@@ -132,9 +131,9 @@ vec3 calcB(vec3 plh) {
 	for n=1,nMax do
 		for m=0,n do
 			local index = n * (n + 1) / 2 + m
-?>	P[<?=index?>] *= <?=clnumber(schmidtQuasiNorm[index])?>;
-	dP[<?=index?>] *= <?=clnumber(-schmidtQuasiNorm[index])?>;
-<?		
+--	P[<?=index?>] *= <?=clnumber(schmidtQuasiNorm[index])?>;
+--	dP[<?=index?>] *= <?=clnumber(-schmidtQuasiNorm[index])?>;
+		
 			-- The sign is changed since the new WMM routines use derivative with respect to latitude
 			-- insted of co-latitude
 		end
@@ -143,6 +142,7 @@ vec3 calcB(vec3 plh) {
 	-- end MAG_PcupLow
 	-- end MAG_AssociatedLegendreFunction
 	-- begin MAG_Summation 
+--]]
 ?>
 
 	float earthRadOverR = wgs84_re * invR;
@@ -166,7 +166,11 @@ vec3 calcB(vec3 plh) {
 ?>		B.z -= 	earthRadOverRToTheN * (0.	
 <?		for m=0,n do
 			local index = (n * (n + 1) / 2 + m) 
-?>			+ P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=clnumber(wmm[n][m].g * (n + 1))?>, <?=clnumber(wmm[n][m].h * (n + 1))?>))
+?>			+ P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=
+				clnumber(wmm[n][m].g * (n + 1) * schmidtQuasiNorm[index])
+			?>, <?=
+				clnumber(wmm[n][m].h * (n + 1) * schmidtQuasiNorm[index])
+			?>))
 <?		end
 ?>		);
 <?
@@ -177,7 +181,11 @@ vec3 calcB(vec3 plh) {
 ?>		B.y += 	earthRadOverRToTheN * (0.	
 <?		for m=1,n do
 			local index = (n * (n + 1) / 2 + m) 
-?>			+ P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=-clnumber(wmm[n][m].h * m)?>, <?=clnumber(wmm[n][m].g * m)?>))
+?>			+ P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=
+				clnumber(-wmm[n][m].h * m * schmidtQuasiNorm[index])
+			?>, <?=
+				clnumber(wmm[n][m].g * m * schmidtQuasiNorm[index])
+			?>))
 <?		end
 ?>		);
 <?
@@ -188,7 +196,11 @@ vec3 calcB(vec3 plh) {
 ?>		B.x -= 	earthRadOverRToTheN * (0.	
 <?		for m=0,n do
 			local index = (n * (n + 1) / 2 + m) 
-?>			+ dP[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=clnumber(wmm[n][m].g)?>, <?=clnumber(wmm[n][m].h)?>))
+?>			+ dP[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=
+				clnumber(wmm[n][m].g * -schmidtQuasiNorm[index])
+			?>, <?=
+				clnumber(wmm[n][m].h * -schmidtQuasiNorm[index])
+			?>))
 <?		end 
 ?>		);
 <?	end 
