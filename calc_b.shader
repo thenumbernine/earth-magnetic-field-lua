@@ -152,36 +152,46 @@ vec3 calcB(vec3 plh) {
 		float earthRadOverRToTheN = earthRadOverR * earthRadOverR;
 	
 <? 
-		for n=1,nMax do 
+	for n=1,nMax do 
 ?>		earthRadOverRToTheN *= earthRadOverR;
 <? 
-		for m=0,n do
+		--.g .h .gt .ht == .xyzw
+		-- then again, looks like I'm not doing any gt/ht calculations... 
+		-- that means my reading is strictly 2020, right?
+		
+		--		    nMax  	(n+2) 	  n     m            m           m
+		--		Bz =   -SUM (a/r)   (n+1) SUM  [g cos(m p) + h sin(m p)] P (sin(phi))
+		--						n=1      	      m=0   n            n           n 
+		-- Equation 12 in the WMM Technical report.  Derivative with respect to radius.
+?>		B.z -= 	earthRadOverRToTheN * (0.	
+<?		for m=0,n do
 			local index = (n * (n + 1) / 2 + m) 
-
-				--.g .h .gt .ht == .xyzw
-				-- then again, looks like I'm not doing any gt/ht calculations... 
-				-- that means my reading is strictly 2020, right?
-				
-				--		    nMax  	(n+2) 	  n     m            m           m
-				--		Bz =   -SUM (a/r)   (n+1) SUM  [g cos(m p) + h sin(m p)] P (sin(phi))
-				--						n=1      	      m=0   n            n           n 
-				-- Equation 12 in the WMM Technical report.  Derivative with respect to radius.
-?>		B.z -= earthRadOverRToTheN *  P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=clnumber(wmm[n][m].g * (n + 1))?>, <?=clnumber(wmm[n][m].h * (n + 1))?>));
-<?				--		  1 nMax  (n+2)    n     m            m           m
-				--		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
-				--				   n=1             m=0   n            n           n 
-				-- Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius.
-			if m > 0 then
-?>		B.y += earthRadOverRToTheN *  P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=-clnumber(wmm[n][m].h * m)?>, <?=clnumber(wmm[n][m].g * m)?>));
-<?			end
-				--		   nMax  (n+2) n     m            m           m
-				--		Bx = - SUM (a/r)   SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
-				--				   n=1         m=0   n            n           n 
-				-- Equation 10  in the WMM Technical report. Derivative with respect to latitude, divided by radius.
-?>		B.x -= earthRadOverRToTheN * dP[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=clnumber(wmm[n][m].g)?>, <?=clnumber(wmm[n][m].h)?>));
+?>			+ P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=clnumber(wmm[n][m].g * (n + 1))?>, <?=clnumber(wmm[n][m].h * (n + 1))?>))
+<?		end
+?>		);
 <?
-		end 
- 	end 
+		--		  1 nMax  (n+2)    n     m            m           m
+		--		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
+		--				   n=1             m=0   n            n           n 
+		-- Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius.
+?>		B.y += 	earthRadOverRToTheN * (0.	
+<?		for m=1,n do
+			local index = (n * (n + 1) / 2 + m) 
+?>			+ P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=-clnumber(wmm[n][m].h * m)?>, <?=clnumber(wmm[n][m].g * m)?>))
+<?		end
+?>		);
+<?
+		--		   nMax  (n+2) n     m            m           m
+		--		Bx = - SUM (a/r)   SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
+		--				   n=1         m=0   n            n           n 
+		-- Equation 10  in the WMM Technical report. Derivative with respect to latitude, divided by radius.
+?>		B.x -= 	earthRadOverRToTheN * (0.	
+<?		for m=0,n do
+			local index = (n * (n + 1) / 2 + m) 
+?>			+ dP[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=clnumber(wmm[n][m].g)?>, <?=clnumber(wmm[n][m].h)?>))
+<?		end 
+?>		);
+<?	end 
 ?>	}
 
 	if (cisPhiSph.x < -1e-10 || cisPhiSph.x > 1e-10) {
