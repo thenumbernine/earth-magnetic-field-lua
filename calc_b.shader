@@ -58,16 +58,38 @@ vec3 calcB(vec3 plh) {
 	for (int m=2; m <= nMax; ++m) {
 		cisLambdaToTheM[m] = cplxmul(cisLambdaToTheM[m-1], cisLambda);
 	}
+<?
 	
-	// end MAG_ComputeSphericalHarmonicVariables
-	// begin MAG_AssociatedLegendreFunction
+	-- end MAG_ComputeSphericalHarmonicVariables
+	-- begin MAG_AssociatedLegendreFunction
 
-	// begin MAG_PcupLow
+	-- Compute the ration between the the Schmidt quasi-normalized associated Legendre
+	-- functions and the Gauss-normalized version.
+
+	local schmidtQuasiNorm = {}
+	schmidtQuasiNorm[0] = 1
 	
-	float Pcup[numTerms];
-	float dPcup[numTerms];
-	Pcup[0] = 1.;
-	dPcup[0] = 0.;
+	for n=1,nMax do
+		local index = (n * (n + 1) / 2)
+		local index1 = (n - 1) * n / 2
+		
+		-- for m = 0
+		schmidtQuasiNorm[index] = schmidtQuasiNorm[index1] * (2 * n - 1) / n
+
+		for m=1,n do
+			local index = (n * (n + 1) / 2 + m)
+			local index1 = (n * (n + 1) / 2 + m - 1)
+			schmidtQuasiNorm[index] = schmidtQuasiNorm[index1] * math.sqrt( ((n - m + 1) * (m == 1 and 2 or 1)) / (n + m))
+		end
+	end
+
+	-- begin MAG_PcupLow
+?>
+	
+	float P[numTerms];	//Legendre function
+	float dP[numTerms];	//Legendre function derivative
+	P[0] = 1.;
+	dP[0] = 0.;
 <? 
 	--	 First,	Compute the Gauss-normalized associated Legendre functions
 	
@@ -76,64 +98,42 @@ vec3 calcB(vec3 plh) {
 			local index = n * (n + 1) / 2 + m
 			if n == m then
 				local index1 = (n - 1) * n / 2 + m - 1
-?>	Pcup[<?=index?>] = cisPhiSph.x * Pcup[<?=index1?>];
-	dPcup[<?=index?>] = cisPhiSph.x * dPcup[<?=index1?>] + cisPhiSph.y * Pcup[<?=index1?>];
+?>	P[<?=index?>] = cisPhiSph.x * P[<?=index1?>];
+	dP[<?=index?>] = cisPhiSph.x * dP[<?=index1?>] + cisPhiSph.y * P[<?=index1?>];
 <?			
 			elseif n == 1 and m == 0 then
 				local index1 = (n - 1) * n / 2 + m
-?>	Pcup[<?=index?>] = cisPhiSph.y * Pcup[<?=index1?>];
-	dPcup[<?=index?>] = cisPhiSph.y * dPcup[<?=index1?>] - cisPhiSph.x * Pcup[<?=index1?>];
+?>	P[<?=index?>] = cisPhiSph.y * P[<?=index1?>];
+	dP[<?=index?>] = cisPhiSph.y * dP[<?=index1?>] - cisPhiSph.x * P[<?=index1?>];
 <?			
 			elseif n > 1 and n ~= m then
 				local index1 = (n - 2) * (n - 1) / 2 + m
 				local index2 = (n - 1) * n / 2 + m
 				if m > n - 2 then
-?>					
-	Pcup[<?=index?>] = cisPhiSph.y * Pcup[<?=index2?>];
-	dPcup[<?=index?>] = cisPhiSph.y * dPcup[<?=index2?>] - cisPhiSph.x * Pcup[<?=index2?>];
+?>	P[<?=index?>] = cisPhiSph.y * P[<?=index2?>];
+	dP[<?=index?>] = cisPhiSph.y * dP[<?=index2?>] - cisPhiSph.x * P[<?=index2?>];
 <?				
 				else
 					local k = (((n - 1) * (n - 1)) - (m * m)) / ((2 * n - 1) * (2 * n - 3))
-?>	Pcup[<?=index?>] = cisPhiSph.y * Pcup[<?=index2?>] - <?=k?> * Pcup[<?=index1?>];
-	dPcup[<?=index?>] = cisPhiSph.y * dPcup[<?=index2?>] - cisPhiSph.x * Pcup[<?=index2?>] - <?=k?> * dPcup[<?=index1?>];
+?>	P[<?=index?>] = cisPhiSph.y * P[<?=index2?>] - <?=k?> * P[<?=index1?>];
+	dP[<?=index?>] = cisPhiSph.y * dP[<?=index2?>] - cisPhiSph.x * P[<?=index2?>] - <?=k?> * dP[<?=index1?>];
 <?
 				end
 			end
 		end
 	end
-	
-	-- Compute the ration between the the Schmidt quasi-normalized associated Legendre
-	-- functions and the Gauss-normalized version.
-
 ?>
-	float schmidtQuasiNorm[numTerms];
-	schmidtQuasiNorm[0] = 1.;
-<?
-	for n=1,nMax do
-		local index = (n * (n + 1) / 2)
-		local index1 = (n - 1) * n / 2
-		-- for m = 0
-?>	schmidtQuasiNorm[<?=index?>] = schmidtQuasiNorm[<?=index1?>] * (2 * <?=n?> - 1) * <?=clnumber(1 / n)?>;
-<?
-		for m=1,n do
-			local index = (n * (n + 1) / 2 + m)
-			local index1 = (n * (n + 1) / 2 + m - 1)
-?>	schmidtQuasiNorm[<?=index?>] = schmidtQuasiNorm[<?=index1?>] * <?=
-		clnumber(math.sqrt( ((n - m + 1) * (m == 1 and 2 or 1)) / (n + m)))
-	?>;
-<?
-		end
-	end
 
+<?
 	-- Converts the Gauss-normalized associated Legendre
 	-- functions to the Schmidt quasi-normalized version using pre-computed
 	-- relation stored in the variable schmidtQuasiNorm
-
+	
 	for n=1,nMax do
 		for m=0,n do
-			local index = (n * (n + 1) / 2 + m)
-?>	Pcup[<?=index?>] = Pcup[<?=index?>] * schmidtQuasiNorm[<?=index?>];
-	dPcup[<?=index?>] = -dPcup[<?=index?>] * schmidtQuasiNorm[<?=index?>];
+			local index = n * (n + 1) / 2 + m
+?>	P[<?=index?>] *= <?=clnumber(schmidtQuasiNorm[index])?>;
+	dP[<?=index?>] *= <?=clnumber(-schmidtQuasiNorm[index])?>;
 <?		
 			-- The sign is changed since the new WMM routines use derivative with respect to latitude
 			-- insted of co-latitude
@@ -151,56 +151,38 @@ vec3 calcB(vec3 plh) {
 	{
 		float earthRadOverRToTheN = earthRadOverR * earthRadOverR;
 	
-		<? for n=1,nMax do ?>{
-			earthRadOverRToTheN *= earthRadOverR;
-			<? for m=0,n do ?>{
-				<? local index = (n * (n + 1) / 2 + m) ?>
+<? 
+		for n=1,nMax do 
+?>		earthRadOverRToTheN *= earthRadOverR;
+<? 
+		for m=0,n do
+			local index = (n * (n + 1) / 2 + m) 
+
+				--.g .h .gt .ht == .xyzw
+				-- then again, looks like I'm not doing any gt/ht calculations... 
+				-- that means my reading is strictly 2020, right?
 				
-				//.g .h .gt .ht == .xyzw
-				// then again, looks like I'm not doing any gt/ht calculations... 
-				// that means my reading is strictly 2020, right?
-				vec2 wmm_n_m = vec2(
-					<?=clnumber(wmm[n][m].g)?>,
-					<?=clnumber(wmm[n][m].h)?>
-				);
-
-				//		    nMax  	(n+2) 	  n     m            m           m
-				//		Bz =   -SUM (a/r)   (n+1) SUM  [g cos(m p) + h sin(m p)] P (sin(phi))
-				//						n=1      	      m=0   n            n           n  */
-				// Equation 12 in the WMM Technical report.  Derivative with respect to radius.*/
-				B.z -=
-					earthRadOverRToTheN
-					* (
-						wmm_n_m.x * cisLambdaToTheM[<?=m?>].x
-						+ wmm_n_m.y * cisLambdaToTheM[<?=m?>].y
-					)
-					* <?=clnumber(n + 1)?> * Pcup[<?=index?>];
-
-				//		  1 nMax  (n+2)    n     m            m           m
-				//		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
-				//				   n=1             m=0   n            n           n  */
-				// Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius. */
-				B.y += 
-					earthRadOverRToTheN
-					* (
-						wmm_n_m.x * cisLambdaToTheM[<?=m?>].y
-						- wmm_n_m.y * cisLambdaToTheM[<?=m?>].x
-					)
-					* <?=clnumber(m)?> * Pcup[<?=index?>];
-				//		   nMax  (n+2) n     m            m           m
-				//		Bx = - SUM (a/r)   SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
-				//				   n=1         m=0   n            n           n  */
-				// Equation 10  in the WMM Technical report. Derivative with respect to latitude, divided by radius. */
-				B.x -=
-					earthRadOverRToTheN *
-					(
-						wmm_n_m.x * cisLambdaToTheM[<?=m?>].x
-						+ wmm_n_m.y * cisLambdaToTheM[<?=m?>].y
-					)
-					* dPcup[<?=index?>];
-			}<? end ?>
-		}<? end ?>
-	}
+				--		    nMax  	(n+2) 	  n     m            m           m
+				--		Bz =   -SUM (a/r)   (n+1) SUM  [g cos(m p) + h sin(m p)] P (sin(phi))
+				--						n=1      	      m=0   n            n           n 
+				-- Equation 12 in the WMM Technical report.  Derivative with respect to radius.
+?>		B.z -= earthRadOverRToTheN *  P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=clnumber(wmm[n][m].g * (n + 1))?>, <?=clnumber(wmm[n][m].h * (n + 1))?>));
+<?				--		  1 nMax  (n+2)    n     m            m           m
+				--		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
+				--				   n=1             m=0   n            n           n 
+				-- Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius.
+			if m > 0 then
+?>		B.y += earthRadOverRToTheN *  P[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=-clnumber(wmm[n][m].h * m)?>, <?=clnumber(wmm[n][m].g * m)?>));
+<?			end
+				--		   nMax  (n+2) n     m            m           m
+				--		Bx = - SUM (a/r)   SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
+				--				   n=1         m=0   n            n           n 
+				-- Equation 10  in the WMM Technical report. Derivative with respect to latitude, divided by radius.
+?>		B.x -= earthRadOverRToTheN * dP[<?=index?>] * dot(cisLambdaToTheM[<?=m?>], vec2(<?=clnumber(wmm[n][m].g)?>, <?=clnumber(wmm[n][m].h)?>));
+<?
+		end 
+ 	end 
+?>	}
 
 	if (cisPhiSph.x < -1e-10 || cisPhiSph.x > 1e-10) {
 		B.y /= cisPhiSph.x;
@@ -211,53 +193,44 @@ vec3 calcB(vec3 plh) {
 		// MAG_CheckGeographicPoles.
 		// begin MAG_SummationSpecial	
 
-		float PcupS[numTerms];
-		PcupS[0] = 1.;
+		float PS[numTerms];
+		PS[0] = 1.;
 
 		B.y = 0.;
 
 		float earthRadOverRToTheN = earthRadOverR * earthRadOverR;
-		<? 
+<? 
 		local schmidtQuasiNorm1 = 1
-		for n=1,nMax do ?>{
-			earthRadOverRToTheN *= earthRadOverR;
+		for n=1,nMax do 
+?>		earthRadOverRToTheN *= earthRadOverR;
+<?
+			--Compute the ration between the Gauss-normalized associated Legendre
+			-- functions and the Schmidt quasi-normalized version. This is equivalent to
+			-- sqrt((m==0?1:2)*(n-m)!/(n+m!))*(2n-1)!!/(n-m)!
 			
-			//Compute the ration between the Gauss-normalized associated Legendre
-			// functions and the Schmidt quasi-normalized version. This is equivalent to
-			// sqrt((m==0?1:2)*(n-m)!/(n+m!))*(2n-1)!!/(n-m)! */
-			<? local m = 1 ?>
-			<? local index = n * (n + 1) / 2 + m ?>
-			vec2 wmm_n_m = vec2(
-				<?=clnumber(wmm[n][m].g)?>,
-				<?=clnumber(wmm[n][m].h)?>
-			);
-
-			<?
+			local m = 1
 			local schmidtQuasiNorm2 = schmidtQuasiNorm1 * (2 * n - 1) / n
 			local schmidtQuasiNorm3 = schmidtQuasiNorm2 * math.sqrt((n * 2) / (n + 1))
 			local schmidtQuasiNorm1 = schmidtQuasiNorm2
-			if n == 1 then ?>
-				PcupS[<?=n?>] = PcupS[<?=n-1?>];
-			<? else 
+			if n == 1 then 
+?>		PS[<?=n?>] = PS[<?=n-1?>];
+<? 			else 
 				local k = (((n - 1) * (n - 1)) - 1) / ((2 * n - 1) * (2 * n - 3))
-			?>
-				PcupS[<?=n?>] = cisPhiSph.y * PcupS[<?=n-1?>] - <?=clnumber(k)?> * PcupS[<?=n-2?>];
-			<? end ?>
+?>		PS[<?=n?>] = cisPhiSph.y * PS[<?=n-1?>] - <?=clnumber(k)?> * PS[<?=n-2?>];
+<? 
+			end 
 
-			//		  1 nMax  (n+2)    n     m            m           m
-			//		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
-			//				   n=1             m=0   n            n           n  */
-			// Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius. */
-			B.y += 
-				earthRadOverRToTheN
-				* (
-					wmm_n_m.x * cisLambdaToTheM[1].y
-					- wmm_n_m.y * cisLambdaToTheM[1].x
-				) * PcupS[<?=n?>] * <?=clnumber(schmidtQuasiNorm3)?>;
-		}<? end ?>
+			--		  1 nMax  (n+2)    n     m            m           m
+			--		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
+			--				   n=1             m=0   n            n           n 
+			-- Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius.
 
-		// end MAG_SummationSpecial	
-	}
+?>		B.y += earthRadOverRToTheN * dot(vec2(<?=-clnumber(wmm[n][m].h)?>, <?=clnumber(wmm[n][m].g)?>), cisLambda) * PS[<?=n?>] * <?=clnumber(schmidtQuasiNorm3)?>;
+<? 
+		end 
+		
+		-- end MAG_SummationSpecial	
+?>	}
 	
 	// end MAG_Summation 
 	// end MAG_Geomag

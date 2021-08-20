@@ -802,29 +802,21 @@ function App:initGL(...)
 		grad.tex = grad:gen()
 	end
 
-
-	local calc_b_shader = file['calc_b.shader']
 	
 	do
 		print'generating B field...'
-		-- can be arbitrary
-		-- but the WMM model is for 15 mins, so [360,180] x4
-		londim = 1440
-		latdim = 720
-		
-		local fbo = require 'gl.fbo'()
-glreport'here'
 
-		local calcBShader = GLProgram{
-			vertexCode = [[
+		local calc_b_shader = file['calc_b.shader']
+
+		local vertexCode = [[
 varying vec2 texcoordv;
 
 void main() {
 	texcoordv = gl_MultiTexCoord0.xy;
 	gl_Position = ftransform();
 }
-]],
-			fragmentCode = template(
+]]
+		local calcBFragmentCode = template(
 [[
 #version 120
 
@@ -841,12 +833,26 @@ void main() {
 	gl_FragColor = vec4(B, 1.);
 }
 ]],
-				{
-					calc_b_shader = calc_b_shader,
-					wgs84 = wgs84,
-					wmm = wmm,
-				}
-			)
+			{
+				calc_b_shader = calc_b_shader,
+				wgs84 = wgs84,
+				wmm = wmm,
+			}
+		)
+
+		file['calc_b.postproc.frag'] = calcBFragmentCode 
+
+		-- can be arbitrary
+		-- but the WMM model is for 15 mins, so [360,180] x4
+		londim = 1440
+		latdim = 720
+		
+		local fbo = require 'gl.fbo'()
+glreport'here'
+
+		local calcBShader = GLProgram{
+			vertexCode = vertexCode,
+			fragmentCode = calcBFragmentCode, 
 		}
 glreport'here'
 		calcBShader:useNone() 
@@ -884,16 +890,8 @@ glreport'here'
 		
 		print'generating div B and curl B...'
 
-
 		local calcB2Shader = GLProgram{
-			vertexCode = [[
-varying vec2 texcoordv;
-
-void main() {
-	texcoordv = gl_MultiTexCoord0.xy;
-	gl_Position = ftransform();
-}
-]],
+			vertexCode = vertexCode,
 			fragmentCode = template(
 [[
 #version 120
