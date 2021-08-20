@@ -802,13 +802,11 @@ function App:initGL(...)
 		grad.tex = grad:gen()
 	end
 
-	
-	do
-		print'generating B field...'
 
-		local calc_b_shader = file['calc_b.shader']
 
-		local vertexCode = [[
+	local calc_b_shader = file['calc_b.shader']
+
+	local vertexCode = [[
 varying vec2 texcoordv;
 
 void main() {
@@ -816,7 +814,7 @@ void main() {
 	gl_Position = ftransform();
 }
 ]]
-		local calcBFragmentCode = template(
+	local calcBFragmentCode = template(
 [[
 #version 120
 
@@ -833,15 +831,21 @@ void main() {
 	gl_FragColor = vec4(B, 1.);
 }
 ]],
-			{
-				calc_b_shader = calc_b_shader,
-				wgs84 = wgs84,
-				wmm = wmm,
-			}
-		)
+		{
+			wgs84 = wgs84,
+			wmm = wmm,
+		}
+	)
 
-		file['calc_b.postproc.frag'] = calcBFragmentCode 
+	file['calc_b.postproc.frag'] = calcBFragmentCode 
 
+
+
+
+
+	do
+		print'generating B field...'
+		
 		-- can be arbitrary
 		-- but the WMM model is for 15 mins, so [360,180] x4
 		londim = 1440
@@ -1088,16 +1092,27 @@ glreport'here'
 
 	for _,overlay in ipairs(overlays) do
 		overlay.shader = GLProgram{
-			vertexCode = [[
-varying vec2 texcoordv;
-
-void main() {
-	texcoordv = gl_MultiTexCoord0.xy;
-	gl_Position = ftransform();
-}
-]],
-			fragmentCode = template(
+			vertexCode = vertexCode,
+			fragmentCode = 
 [[
+#version 120
+//120 needed for mat2x3 type
+
+]]
+..
+template(
+	calc_b_shader,
+	{
+		wgs84 = wgs84,
+		wmm = wmm,
+	}
+)
+..
+template(
+[[
+
+#define CALC_B_ON_GPU
+
 #define BMagMin <?=clnumber(BStat.mag.min)?>
 #define BMagMax <?=clnumber(BStat.mag.max)?>
 #define BMag2DMin <?=clnumber(BStat.mag2d.min)?>
@@ -1127,12 +1142,99 @@ uniform sampler2D B2tex;
 uniform sampler1D hsvtex;
 uniform float alpha;
 
+mat3 latLonToCartesianTangentSpaceWGS84(vec3 plh) {
+	float phi = plh.x;
+	float lambda = plh.y;
+	float height = plh.z;
+
+	float cosLambda = cos(lambda);
+	float sinLambda = sin(lambda);
+
+	float cosPhi = cos(phi);
+	float sinPhi = sin(phi);
+	float dphi_cosPhi = -sinPhi;
+	float dphi_sinPhi = cosPhi;
+
+	float rCart = wgs84_a / sqrt(1. - wgs84_epssq * sinPhi * sinPhi);
+	float tmp = sqrt(1. - wgs84_epssq * sinPhi * sinPhi);
+	float dphi_rCart = wgs84_a / (tmp*tmp*tmp) * wgs84_epssq * sinPhi * dphi_sinPhi;
+
+	float rCart_over_a = 1. / sqrt(1. - wgs84_epssq * sinPhi * sinPhi);
+
+	float xp = (rCart + height) * cosPhi;
+	float dphi_xp = dphi_rCart * cosPhi + (rCart + height) * dphi_cosPhi;
+	float dheight_xp = cosPhi;
+
+	float xp_over_a = (rCart_over_a + height / wgs84_a) * cosPhi;
+
+	float zp = (rCart * (1. - wgs84_epssq) + height) * sinPhi;
+	float dphi_zp = (dphi_rCart * (1. - wgs84_epssq)) * sinPhi + (rCart * (1. - wgs84_epssq) + height) * dphi_sinPhi;
+	float dheight_zp = sinPhi;
+
+	float zp_over_a = (rCart_over_a * (1. - wgs84_epssq) + height / wgs84_a) * sinPhi;
+
+	float r2D = sqrt(xp * xp + zp * zp);
+	float dphi_r2D = (xp * dphi_xp + zp * dphi_zp) / r2D;
+	float dheight_r2D = (xp * dheight_xp + zp * dheight_zp) / r2D;
+
+	float r2D_over_a = sqrt(xp_over_a * xp_over_a + zp_over_a * zp_over_a);
+	float dphi_r2D_over_a = (xp_over_a * dphi_xp + zp_over_a * dphi_zp) / r2D;
+
+	float sinPhiSph = zp / r2D;
+	float dphi_sinPhiSph = (dphi_zp * r2D - zp * dphi_r2D) / (r2D * r2D);
+	float dheight_sinPhiSph = (dheight_zp * r2D - zp * dheight_r2D) / (r2D * r2D);
+
+	float cosPhiSph = sqrt(1. - sinPhiSph * sinPhiSph);
+	// d/du sqrt(1 - x^2) = -x/sqrt(1 - x^2) dx/du;
+	float dphi_cosPhiSph = -sinPhi / cosPhiSph * dphi_sinPhiSph;
+	float dheight_cosPhiSph = -sinPhi / cosPhiSph * dheight_sinPhiSph;
+
+	// float x = r2D * cosPhiSph / wgs84_a * cosLambda;
+	// float y = r2D * cosPhiSph / wgs84_a * sinLambda;
+	// float z = r2D * sinPhiSph / wgs84_a;
+
+	float dphi_x = (dphi_r2D_over_a * cosPhiSph + r2D_over_a * dphi_cosPhiSph) * cosLambda;
+	float dphi_y = (dphi_r2D_over_a * cosPhiSph + r2D_over_a * dphi_cosPhiSph) * sinLambda;
+	float dphi_z = (dphi_r2D_over_a * sinPhiSph + r2D_over_a * dphi_sinPhiSph);
+
+	float dlambda_x = -sinLambda;
+	float dlambda_y = cosLambda;
+
+	float dheight_x = (dheight_r2D * cosPhiSph + r2D * dheight_cosPhiSph) * cosLambda;
+	float dheight_y = (dheight_r2D * cosPhiSph + r2D * dheight_cosPhiSph) * sinLambda;
+	float dheight_z = (dheight_r2D * sinPhiSph + r2D * dheight_sinPhiSph);
+
+	return mat3(
+		vec3(dphi_x, dphi_y, dphi_z),
+		vec3(dlambda_x, dlambda_y, 0),
+		vec3(-dheight_x, -dheight_y, -dheight_z)
+	);
+}
+
+
 void main() {
 	float s = .5;
 	float hsvBlend = .5;
-	
-	vec4 B = texture2D(Btex, texcoordv);
+
 	vec4 B2 = texture2D(B2tex, texcoordv);
+#ifndef CALC_B_ON_GPU
+	vec4 B = texture2D(Btex, texcoordv);
+#else
+	vec3 plh = vec3(
+		(texcoordv.y - .5) * M_PI,			//phi
+		(texcoordv.x - .5) * 2. * M_PI,		//lambda
+		0.
+	);
+	vec3 B = calcB(plh);
+
+#if 0
+	mat3 e = latLonToCartesianTangentSpaceWGS84(plh);
+	//TODO orthonormalize e
+	//then TODO sample along each direction
+	//then TODO convert from cartesian back to plh
+#endif	
+
+#endif
 
 	<?=overlay.code?>
 	
@@ -1146,9 +1248,6 @@ void main() {
 				overlay = overlay,
 				BStat = BStat,
 				clnumber = clnumber,
-				-- for calc_b.shader:
-				wgs84 = wgs84,
-				wmm = wmm,
 			}),
 			uniforms = {
 				earthtex = 0,
@@ -1382,6 +1481,20 @@ end
 
 local bool = ffi.new('bool[1]', false)
 function App:updateGUI()
+	
+	local thisTime = os.time()
+	if thisTime ~= self.lastTime then
+		if self.lastTime then
+			self.fps = self.frames / (thisTime - self.lastTime)
+			self.frames = 0
+		end
+		self.lastTime = thisTime
+	end
+	self.frames = (self.frames or 0) + 1
+
+	ig.igText(''..self.fps)
+
+
 	bool[0] = self.view.ortho
 	if ig.igCheckbox('ortho', bool) then
 		self.view.ortho = bool[0]
