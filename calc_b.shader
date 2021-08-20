@@ -248,7 +248,11 @@ vec3 calcB(vec3 plh) {
 			--				   n=1             m=0   n            n           n 
 			-- Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius.
 
-?>		B.y += earthRadOverRToTheN * dot(vec2(<?=-clnumber(wmm[n][m].h)?>, <?=clnumber(wmm[n][m].g)?>), cisLambda) * PS[<?=n?>] * <?=clnumber(schmidtQuasiNorm3)?>;
+?>		B.y += earthRadOverRToTheN * dot(vec2(<?=
+			clnumber(-wmm[n][m].h * schmidtQuasiNorm3)
+		?>, <?=
+			clnumber(wmm[n][m].g * schmidtQuasiNorm3)
+		?>), cisLambda) * PS[<?=n?>];
 <? 
 		end 
 		
