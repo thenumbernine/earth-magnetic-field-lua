@@ -86,10 +86,8 @@ vec3 calcB(vec3 plh) {
 	-- begin MAG_PcupLow
 ?>
 	
-	float P[numTerms];	//Legendre function
-	float dP[numTerms];	//Legendre function derivative
-	P[0] = 1.;
-	dP[0] = 0.;
+	vec2 P[numTerms];	//Legendre function & derivative
+	P[0] = vec2(1., 0.);
 <? 
 	--	 First,	Compute the Gauss-normalized associated Legendre functions
 	
@@ -98,64 +96,49 @@ vec3 calcB(vec3 plh) {
 			local index = n * (n + 1) / 2 + m
 			if n == m then
 				local index1 = (n - 1) * n / 2 + m - 1
-?>	P[<?=index?>] = cisPhiSph.x * P[<?=index1?>];
-	dP[<?=index?>] = cisPhiSph.x * dP[<?=index1?>] + cisPhiSph.y * P[<?=index1?>];
+?>	P[<?=index?>] = vec2(cisPhiSph.x * P[<?=index1?>].x, cisPhiSph.x * P[<?=index1?>].y + cisPhiSph.y * P[<?=index1?>].x);
 <?			
 			elseif n == 1 and m == 0 then
 				local index1 = (n - 1) * n / 2 + m
-?>	P[<?=index?>] = cisPhiSph.y * P[<?=index1?>];
-	dP[<?=index?>] = cisPhiSph.y * dP[<?=index1?>] - cisPhiSph.x * P[<?=index1?>];
+?>	P[<?=index?>] = vec2(cisPhiSph.y * P[<?=index1?>].x, cisPhiSph.y * P[<?=index1?>].y - cisPhiSph.x * P[<?=index1?>].x);
 <?			
 			elseif n > 1 and n ~= m then
 				local index1 = (n - 2) * (n - 1) / 2 + m
 				local index2 = (n - 1) * n / 2 + m
 				if m > n - 2 then
-?>	P[<?=index?>] = cisPhiSph.y * P[<?=index2?>];
-	dP[<?=index?>] = cisPhiSph.y * dP[<?=index2?>] - cisPhiSph.x * P[<?=index2?>];
+?>	P[<?=index?>] = vec2(cisPhiSph.y * P[<?=index2?>].x, cisPhiSph.y * P[<?=index2?>].y - cisPhiSph.x * P[<?=index2?>].x);
 <?				
 				else
 					local k = (((n - 1) * (n - 1)) - (m * m)) / ((2 * n - 1) * (2 * n - 3))
-?>	P[<?=index?>] = cisPhiSph.y * P[<?=index2?>] - <?=k?> * P[<?=index1?>];
-	dP[<?=index?>] = cisPhiSph.y * dP[<?=index2?>] - cisPhiSph.x * P[<?=index2?>] - <?=k?> * dP[<?=index1?>];
+?>	P[<?=index?>] = vec2(cisPhiSph.y * P[<?=index2?>].x - <?=k?> * P[<?=index1?>].x, cisPhiSph.y * P[<?=index2?>].y - cisPhiSph.x * P[<?=index2?>].x - <?=k?> * P[<?=index1?>].y);
 <?
 				end
 			end
 		end
 	end
 
-
--- bake this into the B sum:
+-- this is now baked into the B sum:
 	
 	-- Converts the Gauss-normalized associated Legendre
 	-- functions to the Schmidt quasi-normalized version using pre-computed
 	-- relation stored in the variable schmidtQuasiNorm
 	
---	for n=1,nMax do
---		for m=0,n do
---			local index = n * (n + 1) / 2 + m
---	P[index] *= clnumber(schmidtQuasiNorm[index]);
---	dP[index] *= clnumber(-schmidtQuasiNorm[index]);
---		
---			-- The sign is changed since the new WMM routines use derivative with respect to latitude
---			-- insted of co-latitude
---		end
---	end
+	-- The sign is changed since the new WMM routines use derivative with respect to latitude
+	-- insted of co-latitude
 	
 	-- end MAG_PcupLow
 	-- end MAG_AssociatedLegendreFunction
 	-- begin MAG_Summation 
+
 ?>
 
 	float earthRadOverR = wgs84_re * invR;
 
-	vec3 B = vec3(0., 0., 0.);
-	{
-		float earthRadOverRToTheN = earthRadOverR * earthRadOverR;
-	
+	vec3 B = earthRadOverR * earthRadOverR * (vec3(0., 0., 0.)
 <? 
 	for n=1,nMax do 
-?>		earthRadOverRToTheN *= earthRadOverR;
-		B += earthRadOverRToTheN * (vec3(0., 0., 0.)
+?>		+ earthRadOverR * (
+			vec3(0., 0., 0.)
 <?
 		for m=0,n do
 			local index = (n * (n + 1) / 2 + m) 
@@ -179,7 +162,7 @@ vec3 calcB(vec3 plh) {
 			--						n=1      	      m=0   n            n           n 
 			-- Equation 12 in the WMM Technical report.  Derivative with respect to radius.
 	
-?>			+ vec3(-dP[<?=index?>], <? if m == 0 then ?>0.<? else ?>P[<?=index?>]<? end ?>, -P[<?=index?>]) * (mat2x3(vec3(<?=
+?>			+ vec3(-P[<?=index?>].y, <? if m == 0 then ?>0.<? else ?>P[<?=index?>].x<? end ?>, -P[<?=index?>].x) * (mat2x3(vec3(<?=
 						clnumber(wmm[n][m].g * -schmidtQuasiNorm[index])
 					?>, <?=
 						clnumber(m == 0 and 0 or (-wmm[n][m].h * m * schmidtQuasiNorm[index]))
@@ -193,9 +176,12 @@ vec3 calcB(vec3 plh) {
 						clnumber(wmm[n][m].h * (n + 1) * schmidtQuasiNorm[index])
 					?>)) * cisLambdaToTheM[<?=m?>])
 <?		end
-?>		);
-<?	end 
-?>	}
+	end 
+?>	
+	<?for n=0,nMax do
+?>)<?	
+	end
+?>;
 
 	if (cisPhiSph.x < -1e-10 || cisPhiSph.x > 1e-10) {
 		B.y /= cisPhiSph.x;
