@@ -123,26 +123,27 @@ vec3 calcB(vec3 plh) {
 		end
 	end
 
---[[ bake this into the B sum
+
+-- bake this into the B sum:
+	
 	-- Converts the Gauss-normalized associated Legendre
 	-- functions to the Schmidt quasi-normalized version using pre-computed
 	-- relation stored in the variable schmidtQuasiNorm
 	
-	for n=1,nMax do
-		for m=0,n do
-			local index = n * (n + 1) / 2 + m
---	P[<?=index?>] *= <?=clnumber(schmidtQuasiNorm[index])?>;
---	dP[<?=index?>] *= <?=clnumber(-schmidtQuasiNorm[index])?>;
-		
-			-- The sign is changed since the new WMM routines use derivative with respect to latitude
-			-- insted of co-latitude
-		end
-	end
+--	for n=1,nMax do
+--		for m=0,n do
+--			local index = n * (n + 1) / 2 + m
+--	P[index] *= clnumber(schmidtQuasiNorm[index]);
+--	dP[index] *= clnumber(-schmidtQuasiNorm[index]);
+--		
+--			-- The sign is changed since the new WMM routines use derivative with respect to latitude
+--			-- insted of co-latitude
+--		end
+--	end
 	
 	-- end MAG_PcupLow
 	-- end MAG_AssociatedLegendreFunction
 	-- begin MAG_Summation 
---]]
 ?>
 
 	float earthRadOverR = wgs84_re * invR;

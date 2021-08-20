@@ -1351,7 +1351,7 @@ function App:update(...)
 		geom = geom,
 		lat = {33, 59, 38},		-- lat
 		lon = {-80, -27, -56},	-- lon
-		heading = .5,
+		heading = -.5,
 	}
 
 	if doDrawVectorField then
