@@ -1519,7 +1519,7 @@ function App:updateGUI()
 
 	ig.igText'geom'
 	for i,geom in ipairs(geoms) do
-		ig.igRadioButtonIntPtr(geom.name, geomIndex, i-1)
+		ig.igRadioButton_IntPtr(geom.name, geomIndex, i-1)
 	end
 
 	ig.igSeparator()
@@ -1533,14 +1533,14 @@ function App:updateGUI()
 	
 	ig.igText'overlay'
 	for i,overlay in ipairs(overlays) do
-		ig.igRadioButtonIntPtr(overlay.name, overlayIndex, i-1)
+		ig.igRadioButton_IntPtr(overlay.name, overlayIndex, i-1)
 	end
 	
 	ig.igSeparator()
 	
 	ig.igText'gradient'
 	for i,grad in ipairs(gradients) do
-		ig.igRadioButtonIntPtr(grad.name, gradientIndex, i-1)
+		ig.igRadioButton_IntPtr(grad.name, gradientIndex, i-1)
 	end
 
 	ig.igInputFloat('alpha', drawAlpha)
