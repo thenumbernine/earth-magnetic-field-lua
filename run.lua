@@ -569,14 +569,6 @@ function Geom:draw()
 	--end)
 end
 
-local float = ffi.new'float[1]'
-local function inputTableFloat(name, t, k, ...)
-	float[0] = assert(tonumber(t[k]))
-	if ig.igInputFloat(name, float, ...) then
-		t[k] = float[0]
-	end
-end
-
 local geoms = {
 	Geom{
 		name = 'Equirectangular',
@@ -585,10 +577,10 @@ local geoms = {
 		phi0 = 0,
 		phi1 = 0,
 		updateGUI = function(self)
-			inputTableFloat('R', self, 'R')
-			inputTableFloat('lambda0', self, 'lambda0')
-			inputTableFloat('phi0', self, 'phi0')
-			inputTableFloat('phi1', self, 'phi1')
+			ig.InputFloat('R', self, 'R')
+			ig.InputFloat('lambda0', self, 'lambda0')
+			ig.InputFloat('phi0', self, 'phi0')
+			ig.InputFloat('phi1', self, 'phi1')
 		end,
 		chart = function(self, phi, lambda, height) 
 			return self.R * (lambda - self.lambda0) * math.cos(self.phi1),
@@ -634,8 +626,8 @@ local geoms = {
 		R = math.pi / 4,
 		lambda0 = 0,	-- in degrees
 		updateGUI = function(self)
-			inputTableFloat('R', self, 'R')
-			inputTableFloat('lambda0', self, 'lambda0')
+			ig.InputFloat('R', self, 'R')
+			ig.InputFloat('lambda0', self, 'lambda0')
 		end,
 		chart = function(self, phi, lambda, height)
 			local theta = phi
@@ -1504,7 +1496,7 @@ function App:updateGUI()
 	end
 	self.frames = (self.frames or 0) + 1
 
-	ig.igText(''..self.fps)
+	ig.igText('fps: '..self.fps)
 
 
 	bool[0] = self.view.ortho
