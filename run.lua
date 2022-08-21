@@ -577,10 +577,10 @@ local geoms = {
 		phi0 = 0,
 		phi1 = 0,
 		updateGUI = function(self)
-			ig.InputFloat('R', self, 'R')
-			ig.InputFloat('lambda0', self, 'lambda0')
-			ig.InputFloat('phi0', self, 'phi0')
-			ig.InputFloat('phi1', self, 'phi1')
+			ig.luatableInputFloat('R', self, 'R')
+			ig.luatableInputFloat('lambda0', self, 'lambda0')
+			ig.luatableInputFloat('phi0', self, 'phi0')
+			ig.luatableInputFloat('phi1', self, 'phi1')
 		end,
 		chart = function(self, phi, lambda, height) 
 			return self.R * (lambda - self.lambda0) * math.cos(self.phi1),
@@ -626,8 +626,8 @@ local geoms = {
 		R = math.pi / 4,
 		lambda0 = 0,	-- in degrees
 		updateGUI = function(self)
-			ig.InputFloat('R', self, 'R')
-			ig.InputFloat('lambda0', self, 'lambda0')
+			ig.luatableInputFloat('R', self, 'R')
+			ig.luatableInputFloat('lambda0', self, 'lambda0')
 		end,
 		chart = function(self, phi, lambda, height)
 			local theta = phi
