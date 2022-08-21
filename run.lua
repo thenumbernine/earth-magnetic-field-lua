@@ -530,9 +530,24 @@ local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
 App.title = 'EM field' 
 
-local geomIndex = ffi.new('int[1]', 0)	-- north pole
-local overlayIndex = ffi.new('int[1]', 1)
-local gradientIndex = ffi.new('int[1]', 0)
+
+local guivars = {
+	geomIndex = 0,	-- north pole
+	overlayIndex = 1,
+	gradientIndex = 0,
+
+	drawAlpha = 1,
+	doDrawVectorField = false,
+
+	fieldDT = 0,
+
+
+	-- set to 0 to flatten vector field against surface
+	fieldZScale = 1,
+
+	arrowScale = 5,
+}
+
 
 
 local Geom = class()
@@ -777,7 +792,6 @@ local overlays = {
 	},
 }
 
-local fieldDT = ffi.new('float[1]', 0)
 
 function App:initGL(...)
 	if App.super.initGL then
@@ -1354,10 +1368,6 @@ local function drawReading(info)
 	gl.glEnd()
 end
 
--- set to 0 to flatten vector field against surface
-local fieldZScale = ffi.new('float[1]', 1)
-
-local arrowScale = ffi.new('float[1]', 5)
 local function drawVectorField(geom)
 
 	local arrow = {
@@ -1372,7 +1382,7 @@ local function drawVectorField(geom)
 	local height = 0
 	local jres = 60
 	local ires = 30
-	local scale = arrowScale[0]  / (BStat.mag.max * ires)
+	local scale = guivars.arrowScale  / (BStat.mag.max * ires)
 --	geom.list = geom.list or {}
 --	glCallOrRun(geom.list, function()
 	gl.glBegin(gl.GL_LINES)
@@ -1401,7 +1411,7 @@ local function drawVectorField(geom)
 			-- [[ draw our arrow
 			local B = ex * Bx 
 				+ ey * By 
-				+ ez * Bz * fieldZScale[0]
+				+ ez * Bz * guivars.fieldZScale
 
 			for _,q in ipairs(arrow) do
 				local s, t = q[1], q[2]
@@ -1418,20 +1428,17 @@ local function drawVectorField(geom)
 end
 
 
-local drawAlpha = ffi.new('float[1]', 1)
-local doDrawVectorField = false
-
 function App:update(...)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
-	local shader = assert(overlays[tonumber(overlayIndex[0])+1]).shader
-	local gradtex = assert(gradients[tonumber(gradientIndex[0])+1]).tex
-	local geom = assert(geoms[tonumber(geomIndex[0])+1])
+	local shader = assert(overlays[tonumber(guivars.overlayIndex)+1]).shader
+	local gradtex = assert(gradients[tonumber(guivars.gradientIndex)+1]).tex
+	local geom = assert(geoms[tonumber(guivars.geomIndex)+1])
 
 	shader:use()
 
 	if shader.uniforms.dt then
-		gl.glUniform1f(shader.uniforms.dt.loc, fieldDT[0])
+		gl.glUniform1f(shader.uniforms.dt.loc, guivars.fieldDT)
 	end
 
 	earthtex:bind(0)
@@ -1457,13 +1464,13 @@ function App:update(...)
 		heading = -.5,
 	}
 
-	if doDrawVectorField then
+	if guivars.doDrawVectorField then
 		drawVectorField(geom)
 	end
 	
 	shader:use()
 
-	gl.glUniform1f(shader.uniforms.alpha.loc, drawAlpha[0])
+	gl.glUniform1f(shader.uniforms.alpha.loc, guivars.drawAlpha)
 
 	gl.glCullFace(gl.GL_FRONT)
 	geom:draw()
@@ -1483,7 +1490,6 @@ function App:update(...)
 	App.super.update(self, ...)
 end
 
-local bool = ffi.new('bool[1]', false)
 function App:updateGUI()
 	
 	local thisTime = os.time()
@@ -1499,24 +1505,17 @@ function App:updateGUI()
 	ig.igText('fps: '..self.fps)
 
 
-	bool[0] = self.view.ortho
-	if ig.igCheckbox('ortho', bool) then
-		self.view.ortho = bool[0]
-	end
-
-	bool[0] = doDrawVectorField
-	if ig.igCheckbox('draw vector field', bool) then
-		doDrawVectorField = bool[0]
-	end
+	ig.luatableCheckbox('ortho', self.view, 'ortho')
+	ig.luatableCheckbox('draw vector field', guivars, 'doDrawVectorField')
 
 	ig.igText'geom'
 	for i,geom in ipairs(geoms) do
-		ig.igRadioButton_IntPtr(geom.name, geomIndex, i-1)
+		ig.luatableRadioButton(geom.name, guivars, 'geomIndex', i-1)
 	end
 
 	ig.igSeparator()
 
-	local geom = assert(geoms[tonumber(geomIndex[0])+1])
+	local geom = assert(geoms[tonumber(guivars.geomIndex)+1])
 	if geom.updateGUI then
 		geom:updateGUI()
 	end
@@ -1525,24 +1524,24 @@ function App:updateGUI()
 	
 	ig.igText'overlay'
 	for i,overlay in ipairs(overlays) do
-		ig.igRadioButton_IntPtr(overlay.name, overlayIndex, i-1)
+		ig.luatableRadioButton(overlay.name, guivars, 'overlayIndex', i-1)
 	end
 	
 	ig.igSeparator()
 	
 	ig.igText'gradient'
 	for i,grad in ipairs(gradients) do
-		ig.igRadioButton_IntPtr(grad.name, gradientIndex, i-1)
+		ig.luatableRadioButton(grad.name, guivars, 'gradientIndex', i-1)
 	end
 
-	ig.igInputFloat('alpha', drawAlpha)
-	ig.igInputFloat('field z', fieldZScale)
-	ig.igInputFloat('field size', arrowScale)
+	ig.luatableInputFloat('alpha', guivars, 'drawAlpha')
+	ig.luatableInputFloat('field z', guivars, 'fieldZScale')
+	ig.luatableInputFloat('field size', guivars, 'arrowScale')
 
 	-- how linear are the g and h coeffs?
 	-- can I just factor out the dt?
-	--ig.igInputFloat('time from '..wmm.epoch, fieldDT)
-	ig.igSliderFloat('time from '..wmm.epoch, fieldDT, 0, 5)
+	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
+	ig.luatableSliderFloat('time from '..wmm.epoch, guivars, 'fieldDT', 0, 5)
 end
 
 App():run()
