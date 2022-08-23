@@ -17,12 +17,12 @@ require 'ext'
 
 -- Sets WGS-84 parameters
 local wgs84 = {}
-wgs84.a = 6378.137 --semi-major axis of the ellipsoid in 
-wgs84.b = 6356.7523142 --semi-minor axis of the ellipsoid in 
-wgs84.fla = 1 / 298.257223563 -- flattening 
-wgs84.eps = math.sqrt(1 - (wgs84.b * wgs84.b) / (wgs84.a * wgs84.a)) --first eccentricity 
-wgs84.epssq = wgs84.eps * wgs84.eps --first eccentricity squared 
-wgs84.re = 6371.2 -- Earth's radius 
+wgs84.a = 6378.137 --semi-major axis of the ellipsoid in
+wgs84.b = 6356.7523142 --semi-minor axis of the ellipsoid in
+wgs84.fla = 1 / 298.257223563 -- flattening
+wgs84.eps = math.sqrt(1 - (wgs84.b * wgs84.b) / (wgs84.a * wgs84.a)) --first eccentricity
+wgs84.epssq = wgs84.eps * wgs84.eps --first eccentricity squared
+wgs84.re = 6371.2 -- Earth's radius
 
 
 
@@ -80,7 +80,7 @@ local function calcB(phi, lambda, height)
 	local r = math.sqrt(xp * xp + zp * zp)
 	local sinPhiSph = zp / r	-- geocentric latitude sin & cos
 	local cosPhiSph = math.sqrt(1 - sinPhiSph * sinPhiSph)
-	-- longitude is the same 
+	-- longitude is the same
 	-- end MAG_GeodeticToSpherical
 
 	-- begin MAG_Geomag
@@ -177,7 +177,7 @@ local function calcB(phi, lambda, height)
 	
 	-- end MAG_PcupLow
 	-- end MAG_AssociatedLegendreFunction
-	-- begin MAG_Summation 
+	-- begin MAG_Summation
 
 	local Bz = 0
 	local By = 0
@@ -192,10 +192,10 @@ local function calcB(phi, lambda, height)
 			--		Bz =   -SUM (a/r)   (n+1) SUM  [g cos(m p) + h sin(m p)] P (sin(phi))
 			--						n=1      	      m=0   n            n           n  */
 			-- Equation 12 in the WMM Technical report.  Derivative with respect to radius.*/
-			Bz = Bz - 
+			Bz = Bz -
 				RelativeRadiusPower[n]
 				* (
-					wmm_n_m.g * cosLambdaToTheM[m] 
+					wmm_n_m.g * cosLambdaToTheM[m]
 					+ wmm_n_m.h * sinLambdaToTheM[m]
 				)
 				* (n + 1) * Pcup[index]
@@ -207,7 +207,7 @@ local function calcB(phi, lambda, height)
 			By = By + (
 				RelativeRadiusPower[n]
 				* (
-					wmm_n_m.g * sinLambdaToTheM[m] 
+					wmm_n_m.g * sinLambdaToTheM[m]
 					- wmm_n_m.h * cosLambdaToTheM[m]
 				)
 				* m * Pcup[index]
@@ -216,7 +216,7 @@ local function calcB(phi, lambda, height)
 			--		Bx = - SUM (a/r)   SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
 			--				   n=1         m=0   n            n           n  */
 			-- Equation 10  in the WMM Technical report. Derivative with respect to latitude, divided by radius. */
-			Bx = Bx - 
+			Bx = Bx -
 				RelativeRadiusPower[n] *
 				(
 					wmm_n_m.g * cosLambdaToTheM[m]
@@ -233,7 +233,7 @@ local function calcB(phi, lambda, height)
 		-- If the user wants to avoid using this function,  please make sure that
 		-- the latitude is not exactly +/-90. An option is to make use the function
 		-- MAG_CheckGeographicPoles.
-		-- begin MAG_SummationSpecial	
+		-- begin MAG_SummationSpecial
 
 		local PcupS = {[0] = 1}
 		local schmidtQuasiNorm1 = 1
@@ -262,7 +262,7 @@ local function calcB(phi, lambda, height)
 			--		By =    SUM (a/r) (m)  SUM  [g cos(m p) + h sin(m p)] dP (sin(phi))
 			--				   n=1             m=0   n            n           n  */
 			-- Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius. */
-			By = By + 
+			By = By +
 				RelativeRadiusPower[n] *
 				(
 					wmm_n_m.g * sinLambdaToTheM[1] -
@@ -270,10 +270,10 @@ local function calcB(phi, lambda, height)
 					* PcupS[n] * schmidtQuasiNorm3
 		end
 
-		-- end MAG_SummationSpecial	
+		-- end MAG_SummationSpecial
 	end
 	
-	-- end MAG_Summation 
+	-- end MAG_Summation
 	-- end MAG_Geomag
 
 	return Bx, By, Bz
@@ -327,7 +327,7 @@ local function cartesianToLatLonWGS84(x, y, z)
 	if  d >= 0 then
 		v = math.pow( (math.sqrt( d ) - q), (1 / 3) )
 			- math.pow( (math.sqrt( d ) + q), (1 / 3) )
-	else 
+	else
 		v= 2 * math.sqrt( -p )
 			* math.cos( math.acos( q/(p * math.sqrt( -p )) ) / 3 )
 	end
@@ -351,7 +351,7 @@ local function cartesianToLatLonWGS84(x, y, z)
 	while lambda > math.pi do
 		lambda= lambda - 2 * math.pi
 	end
-	return phi, lambda, height 
+	return phi, lambda, height
 end
 
 --[=[
@@ -395,7 +395,7 @@ chart = chart:tidy()
 --print'chart:'
 --print(sym.export.Lua:toFunc{func='latLonToCartesianWGS84', output={table.unpack(chart)}, input={phi, lambda, height}})
 
--- TODO how to evaluate only 
+-- TODO how to evaluate only
 
 -- TODO divide by r cos(theta)
 local Bx = sym.Array(
@@ -528,7 +528,7 @@ local earthtex
 
 local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
-App.title = 'EM field' 
+App.title = 'EM field'
 
 
 local guivars = {
@@ -597,14 +597,14 @@ local geoms = {
 			ig.luatableInputFloat('phi0', self, 'phi0')
 			ig.luatableInputFloat('phi1', self, 'phi1')
 		end,
-		chart = function(self, phi, lambda, height) 
+		chart = function(self, phi, lambda, height)
 			return self.R * (lambda - self.lambda0) * math.cos(self.phi1),
 				self.R * (phi - self.phi0),
 				height / wgs84.a
 		end,
 		basis = function(self, phi, lambda, height)
 			-- Bx is north, By is east, Bz is down ... smh
-			return 
+			return
 				vec3f(0, 1, 0),
 				vec3f(1, 0, 0),
 				vec3f(0, 0, -1)
@@ -620,9 +620,9 @@ local geoms = {
 	},
 	Geom{
 		name = 'Azimuthal equidistant',
-		chart = function(self, phi, lambda, height) 
+		chart = function(self, phi, lambda, height)
 			local theta = .5 * math.pi - phi
-			return 
+			return
 				math.cos(lambda) * theta,
 				math.sin(lambda) * theta,
 				height / wgs84.a
@@ -630,7 +630,7 @@ local geoms = {
 		basis = function(self, phi, lambda, height)
 			local cosLambda = math.cos(lambda)
 			local sinLambda = math.sin(lambda)
-			return 
+			return
 				vec3f(-cosLambda, -sinLambda, 0),	-- d/dphi
 				vec3f(-sinLambda, cosLambda, 0),	-- d/dlambda
 				vec3f(0, 0, -1)						-- d/dheight
@@ -663,7 +663,7 @@ local geoms = {
 			return x, y, height / wgs84.a
 		end,
 		basis = function(self, phi, lambda, height)
-			return 
+			return
 				vec3f(0, 1, 0),
 				vec3f(1, 0, 0),
 				vec3f(0, 0, -1)
@@ -731,13 +731,13 @@ local overlays = {
 ]],
 	},
 	{
-		name = '|B|', 
+		name = '|B|',
 		code = [[
 	s = (length(B) - BMagMin) / (BMagMax - BMagMin);
 ]],
 	},
 	{
-		name = '|B| 2D', 
+		name = '|B| 2D',
 		code = [[
 	s = (length(B.xy) - BMag2DMin) / (BMag2DMax - BMag2DMin);
 ]],
@@ -847,7 +847,7 @@ void main() {
 		}
 	)
 
-	file['calc_b.postproc.frag'] = calcBFragmentCode 
+	file['calc_b.postproc.frag'] = calcBFragmentCode
 
 
 
@@ -866,10 +866,10 @@ glreport'here'
 
 		local calcBShader = GLProgram{
 			vertexCode = vertexCode,
-			fragmentCode = calcBFragmentCode, 
+			fragmentCode = calcBFragmentCode,
 		}
 glreport'here'
-		calcBShader:useNone() 
+		calcBShader:useNone()
 glreport'here'
 
 		Btex = GLTex2D{
@@ -946,7 +946,7 @@ void main() {
 
 	gl_FragColor = vec4(
 		div_B,
-		div2D_B, 
+		div2D_B,
 		curl_B.z,
 		length(curl_B)
 	);
@@ -963,7 +963,7 @@ void main() {
 			)
 		}
 glreport'here'
-		calcB2Shader:useNone() 
+		calcB2Shader:useNone()
 glreport'here'
 
 		B2tex = GLTex2D{
@@ -990,35 +990,18 @@ glreport'here'
 glreport'here'
 
 
-
-
-		Btex:bind()
-glreport'here'
-		
 		-- only used for stat calc
 		local Bdata = ffi.new('vec3f_t[?]', londim * latdim)
-		gl.glGetTexImage(
-			Btex.target,
-			0,
-			gl.GL_RGB,
-			gl.GL_FLOAT,
-			ffi.cast('char*', Bdata)
-		)
+		Btex:toCPU(Bdata)
 glreport'here'
 		
-		B2tex:bind()
 glreport'here'
 		
 		--B2tex:generateMipmap()
 
 		local B2data = ffi.new('vec4f_t[?]', londim * latdim)
-		gl.glGetTexImage(
-			B2tex.target,
-			0,
-			gl.GL_RGBA,
-			gl.GL_FLOAT,
-			ffi.cast('char*', B2data)
-		)
+		B2tex:bind()
+		B2tex:toCPU(B2data)
 glreport'here'
 		
 		B2tex:unbind()
@@ -1105,7 +1088,7 @@ glreport'here'
 	for _,overlay in ipairs(overlays) do
 		overlay.shader = GLProgram{
 			vertexCode = vertexCode,
-			fragmentCode = 
+			fragmentCode =
 [[
 #version 120
 //120 needed for mat2x3 type
@@ -1246,7 +1229,7 @@ void main() {
 	//TODO orthonormalize e
 	//then TODO sample along each direction
 	//then TODO convert from cartesian back to plh
-#endif	
+#endif
 
 #endif
 
@@ -1272,7 +1255,7 @@ void main() {
 				dt = 0,
 			},
 		}
-		overlay.shader:useNone() 
+		overlay.shader:useNone()
 	end
 
 	if self.view then
@@ -1351,7 +1334,7 @@ local function drawReading(info)
 	for i=1,numSteps do
 		
 		q:rotate(pos, pos)
---print(pos, geom:chart(cartesianToLatLonWGS84(pos:unpack())))	
+--print(pos, geom:chart(cartesianToLatLonWGS84(pos:unpack())))
 		gl.glVertex3f(geom:chart(cartesianToLatLonWGS84(pos:unpack())))
 	end
 	
@@ -1409,8 +1392,8 @@ local function drawVectorField(geom)
 			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ez.x * scale, y + ez.y * scale, z + ez.z * scale)
 			--]]
 			-- [[ draw our arrow
-			local B = ex * Bx 
-				+ ey * By 
+			local B = ex * Bx
+				+ ey * By
 				+ ez * Bz * guivars.fieldZScale
 
 			for _,q in ipairs(arrow) do
