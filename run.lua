@@ -526,7 +526,7 @@ local B2tex
 
 local earthtex
 
-local App = class(require 'glapp.orbit'(require 'imguiapp'))
+local App = require 'imguiapp.withorbit'()
 
 App.title = 'EM field'
 
