@@ -33,7 +33,7 @@ local year = 2020	-- TODO add support for dg/dh
 
 
 -- load wmm
-local lines = file['wmm.cof']:trim():split'\n'
+local lines = file'wmm.cof':read():trim():split'\n'
 local header = lines:remove(1):trim():split'%s+'
 assert(#header == 3)
 print('model epoch', header[1])
@@ -811,7 +811,7 @@ function App:initGL(...)
 
 
 
-	local calc_b_shader = file['calc_b.shader']
+	local calc_b_shader = file'calc_b.shader':read()
 
 	local vertexCode = [[
 varying vec2 texcoordv;
@@ -847,7 +847,7 @@ void main() {
 		}
 	)
 
-	file['calc_b.postproc.frag'] = calcBFragmentCode
+	file'calc_b.postproc.frag':write(calcBFragmentCode)
 
 
 
@@ -1063,7 +1063,7 @@ glreport'here'
 			end
 		end
 		for i,bin in ipairs(bins) do
-			file['tmp.txt'] = bin:getTextData()
+			file'tmp.txt':write(bin:getTextData())
 			require 'gnuplot'{
 				title = BStat[i].name,
 				terminal = 'png size 1024,768',
