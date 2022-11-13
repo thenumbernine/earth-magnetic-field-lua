@@ -532,12 +532,12 @@ App.title = 'EM field'
 
 
 local guivars = {
-	geomIndex = 0,	-- north pole
+	geomIndex = 2,	-- north pole
 	overlayIndex = 1,
 	gradientIndex = 0,
 
 	drawAlpha = 1,
-	doDrawVectorField = false,
+	doDrawVectorField = true,
 
 	fieldDT = 0,
 
@@ -1432,7 +1432,9 @@ function App:update(...)
 	gl.glUniform1f(shader.uniforms.alpha.loc, 1)
 
 	shader:useNone()
-	
+
+-- TODO more samples
+--[[
 	drawReading{
 		geom = geom,
 		lat = {42, 52, 45.021},
@@ -1446,6 +1448,7 @@ function App:update(...)
 		lon = {-80, -27, -56},	-- lon
 		heading = -.5,
 	}
+--]]
 
 	if guivars.doDrawVectorField then
 		drawVectorField(geom)
