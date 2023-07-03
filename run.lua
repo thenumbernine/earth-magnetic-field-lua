@@ -1530,4 +1530,4 @@ function App:updateGUI()
 	ig.luatableSliderFloat('time from '..wmm.epoch, guivars, 'fieldDT', 0, 5)
 end
 
-App():run()
+return App():run()
