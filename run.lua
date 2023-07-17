@@ -4,6 +4,10 @@ local vec3f = require 'vec-ffi.vec3f'
 local vec4f = require 'vec-ffi.vec4f'
 local quatf = require 'vec-ffi.quatf'
 local template = require 'template'
+local class = require 'ext.class'
+local table = require 'ext.table'
+local string = require 'ext.string'
+local file = require 'ext.file'
 local gl = require 'gl'
 local glreport = require 'gl.report'
 local ig = require 'imgui'
@@ -12,7 +16,6 @@ local GLProgram = require 'gl.program'
 local glCallOrRun = require 'gl.call'
 local clnumber = require 'cl.obj.number'
 local StatSet = require 'stat.set'
-require 'ext'
 
 
 -- Sets WGS-84 parameters
@@ -33,8 +36,8 @@ local year = 2020	-- TODO add support for dg/dh
 
 
 -- load wmm
-local lines = file'wmm.cof':read():trim():split'\n'
-local header = lines:remove(1):trim():split'%s+'
+local lines = string.split(string.trim(file'wmm.cof':read()), '\n')
+local header = string.split(string.trim(lines:remove(1)), '%s+')
 assert(#header == 3)
 print('model epoch', header[1])
 print('model name', header[2])
@@ -44,7 +47,7 @@ assert(lines:remove() == '999999999999999999999999999999999999999999999999')
 
 local wmm = {}
 for _,line in ipairs(lines) do
-	local parts = line:trim():split'%s+'
+	local parts = string.split(string.trim(line), '%s+')
 	assert(#parts == 6)
 	parts = parts:mapi(function(x)
 		return assert(tonumber(x))
@@ -1488,7 +1491,7 @@ function App:updateGUI()
 	end
 	self.frames = (self.frames or 0) + 1
 
-	ig.igText('fps: '..self.fps)
+	ig.igText('fps: '..tostring(self.fps))
 
 
 	ig.luatableCheckbox('ortho', self.view, 'ortho')
@@ -1527,7 +1530,7 @@ function App:updateGUI()
 	-- how linear are the g and h coeffs?
 	-- can I just factor out the dt?
 	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
-	ig.luatableSliderFloat('time from '..wmm.epoch, guivars, 'fieldDT', 0, 5)
+	ig.luatableSliderFloat('time from '..tostring(wmm.epoch), guivars, 'fieldDT', 0, 5)
 end
 
 return App():run()
