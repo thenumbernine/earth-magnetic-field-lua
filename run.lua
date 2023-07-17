@@ -7,7 +7,7 @@ local template = require 'template'
 local class = require 'ext.class'
 local table = require 'ext.table'
 local string = require 'ext.string'
-local file = require 'ext.file'
+local path = require 'ext.path'
 local gl = require 'gl'
 local glreport = require 'gl.report'
 local ig = require 'imgui'
@@ -36,7 +36,7 @@ local year = 2020	-- TODO add support for dg/dh
 
 
 -- load wmm
-local lines = string.split(string.trim(file'wmm.cof':read()), '\n')
+local lines = string.split(string.trim(path'wmm.cof':read()), '\n')
 local header = string.split(string.trim(lines:remove(1)), '%s+')
 assert(#header == 3)
 print('model epoch', header[1])
@@ -814,7 +814,7 @@ function App:initGL(...)
 
 
 
-	local calc_b_shader = file'calc_b.shader':read()
+	local calc_b_shader = path'calc_b.shader':read()
 
 	local vertexCode = [[
 varying vec2 texcoordv;
@@ -850,7 +850,7 @@ void main() {
 		}
 	)
 
-	file'calc_b.postproc.frag':write(calcBFragmentCode)
+	path'calc_b.postproc.frag':write(calcBFragmentCode)
 
 
 
@@ -1066,7 +1066,7 @@ glreport'here'
 			end
 		end
 		for i,bin in ipairs(bins) do
-			file'tmp.txt':write(bin:getTextData())
+			path'tmp.txt':write(bin:getTextData())
 			require 'gnuplot'{
 				title = BStat[i].name,
 				terminal = 'png size 1024,768',
