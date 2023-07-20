@@ -898,9 +898,10 @@ glreport'here'
 		}
 glreport'here'
 	
-		Btex:bind()
-		Btex:generateMipmap()
-		Btex:unbind()
+		Btex
+			:bind()
+			:generateMipmap()
+			:unbind()
 glreport'here'
 
 -- [=[ hmm, better way than copy paste?
