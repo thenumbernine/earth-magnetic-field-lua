@@ -865,6 +865,7 @@ void main() {
 		latdim = 720
 		
 		local fbo = require 'gl.fbo'()
+			:unbind()
 glreport'here'
 
 		local calcBShader = GLProgram{
