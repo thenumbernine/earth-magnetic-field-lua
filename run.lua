@@ -28,24 +28,21 @@ wgs84.epssq = wgs84.eps * wgs84.eps --first eccentricity squared
 wgs84.re = 6371.2 -- Earth's radius
 
 
-
 local HeightAboveEllipsoid = 0		-- compute at z=0 for now
-local year = 2020	-- TODO add support for dg/dh
-
-
-
+-- TODO add support for dg/dh
 
 -- load wmm
 local lines = string.split(string.trim(path'wmm.cof':read()), '\n')
 local header = string.split(string.trim(lines:remove(1)), '%s+')
 assert(#header == 3)
-print('model epoch', header[1])
+local wmm = {}
+wmm.epoch = tonumber(header[1])
+print('model epoch', wmm.epoch)
 print('model name', header[2])
 print('date of release', header[3])
 assert(lines:remove() == '999999999999999999999999999999999999999999999999')
 assert(lines:remove() == '999999999999999999999999999999999999999999999999')
 
-local wmm = {}
 for _,line in ipairs(lines) do
 	local parts = string.split(string.trim(line), '%s+')
 	assert(#parts == 6)
@@ -78,7 +75,7 @@ local function calcB(phi, lambda, height)
 	local rc = wgs84.a / math.sqrt(1 - wgs84.epssq * sinPhi * sinPhi)
 	local xp = (rc + height) * cosPhi
 	local zp = (rc * (1 - wgs84.epssq) + height) * sinPhi
-	
+
 	-- spherical results:
 	local r = math.sqrt(xp * xp + zp * zp)
 	local sinPhiSph = zp / r	-- geocentric latitude sin & cos
@@ -91,7 +88,7 @@ local function calcB(phi, lambda, height)
 
 	local cosLambda = math.cos(lambda)
 	local sinLambda = math.sin(lambda)
-	
+
 	local RelativeRadiusPower = {}	-- 0-nmake
 	RelativeRadiusPower[0] = (wgs84.re / r) * (wgs84.re / r)
 	for n=1,nMax do
@@ -106,12 +103,12 @@ local function calcB(phi, lambda, height)
 		cosLambdaToTheM[m] = cosLambdaToTheM[m-1] * cosLambda - sinLambdaToTheM[m-1] * sinLambda
 		sinLambdaToTheM[m] = cosLambdaToTheM[m-1] * sinLambda + sinLambdaToTheM[m-1] * cosLambda
 	end
-	
+
 	-- end MAG_ComputeSphericalHarmonicVariables
 	-- begin MAG_AssociatedLegendreFunction
 
 	-- begin MAG_PcupLow
-	
+
 	local x = sinPhiSph
 	local Pcup = {[0] = 1}
 	local dPcup = {[0] = 0}
@@ -177,7 +174,7 @@ local function calcB(phi, lambda, height)
 			-- insted of co-latitude */
 		end
 	end
-	
+
 	-- end MAG_PcupLow
 	-- end MAG_AssociatedLegendreFunction
 	-- begin MAG_Summation
@@ -275,47 +272,20 @@ local function calcB(phi, lambda, height)
 
 		-- end MAG_SummationSpecial
 	end
-	
+
 	-- end MAG_Summation
 	-- end MAG_Geomag
 
 	return Bx, By, Bz
 end
 
-
-
--- latitude = phi in [-pi/2, pi/2]
--- longitude = lambda in [-pi,pi]
--- returns xyz cartesian coordinates in units of the wgs84's 'a' parameter
-local function latLonToCartesianWGS84(phi, lambda, height)
-	local cosLambda = math.cos(lambda)
-	local sinLambda = math.sin(lambda)
-
-	local cosPhi = math.cos(phi)
-	local sinPhi = math.sin(phi)
-	
-	local rCart = wgs84.a / math.sqrt(1 - wgs84.epssq * sinPhi * sinPhi)
-	local xp = (rCart + height) * cosPhi
-	local zp = (rCart * (1 - wgs84.epssq) + height) * sinPhi
-	
-	local r2D = math.sqrt(xp * xp + zp * zp)
-	local sinPhiSph = zp / r2D
-	local cosPhiSph = math.sqrt(1 - sinPhiSph * sinPhiSph)
-
-	r2D = r2D / wgs84.a
-	local x = r2D * cosPhiSph * cosLambda
-	local y = r2D * cosPhiSph * sinLambda
-	local z = r2D * sinPhiSph
-
-	return x, y, z
-end
-
 -- expects xyz in cartesian units of wgs84's 'a' parameter
+-- TODO just use charts.WGS84:chartInv(x,y,z) ?
 local function cartesianToLatLonWGS84(x, y, z)
 	x = x * wgs84.a
 	y = y * wgs84.a
 	z = z * wgs84.a
-	
+
 	local modified_b = z < 0 and -wgs84.b or wgs84.b
 
 	local r = math.sqrt(x*x + y*y)
@@ -338,7 +308,7 @@ local function cartesianToLatLonWGS84(x, y, z)
 	if v*v < math.abs(p)  then
 		v = -(v*v*v + 2*q) / (3*p)
 	end
-	
+
 	local g = (math.sqrt( e*e + v ) + e) / 2
 	local t = math.sqrt( g*g  + (f - v*g)/(2*g - e) ) - g
 
@@ -357,163 +327,11 @@ local function cartesianToLatLonWGS84(x, y, z)
 	return phi, lambda, height
 end
 
---[=[
-do
-	local sym = require 'symmath'
-	local var = sym.var
-	local lambda = var'lambda'
-	local phi = var'phi'
-	local height = var'height'
-	local wgs84_a = sym.var'wgs84.a'
-	local wgs84_epssq = sym.var'wgs84.epssq'
-	
-	local cosLambda = sym.cos(lambda)
-	local sinLambda = sym.sin(lambda)
-
-	local cosPhi = sym.cos(phi)
-	local sinPhi = sym.sin(phi)
-	
-	local rCart = wgs84_a / sym.sqrt(1 - wgs84_epssq * sinPhi * sinPhi)
-	local xp = (rCart + height) * cosPhi
-	local zp = (rCart * (1 - wgs84_epssq) + height) * sinPhi
-	
-	local r2D = sym.sqrt(xp * xp + zp * zp)
-	local phiSph = sym.asin(zp / r2D)
-	-- TODO check domain and see if you can just use zp/r2D and sqrt(1-sinPhiSph^2)
-	local cosPhiSph = sym.cos(phiSph)
-	local sinPhiSph = sym.sin(phiSph)
-
-	r2D = r2D / wgs84_a
-	local x = r2D * cosPhiSph * cosLambda
-	local y = r2D * cosPhiSph * sinLambda
-	local z = r2D * sinPhiSph
-
-
-	local chart = sym.Array(x,y,z)
-
-chart = chart:prune()
-chart = chart:tidy()
---chart() takes forever
-
---print'chart:'
---print(sym.export.Lua:toFunc{func='latLonToCartesianWGS84', output={table.unpack(chart)}, input={phi, lambda, height}})
-
--- TODO how to evaluate only
-
--- TODO divide by r cos(theta)
-local Bx = sym.Array(
-	x:diff(phi):prune():tidy(),
-	y:diff(phi):prune():tidy(),
-	z:diff(phi):prune():tidy()
-)
---[[ not enough memory
-BxLen = Bx:normSq():sqrt():prune():tidy()
-Bx = (Bx / BxLen):prune():tidy()
---]]
--- TODO divide by r
-local By = sym.Array(
-	x:diff(lambda):prune():tidy(),
-	y:diff(lambda):prune():tidy(),
-	z:diff(lambda):prune():tidy()
-)
---[[ not enough memory
-ByLen = By:normSq():sqrt():prune():tidy()
-By = (By / ByLen):prune():tidy()
---]]
-local Bz = sym.Array(
-	-x:diff(height):prune():tidy(),
-	-y:diff(height):prune():tidy(),
-	-z:diff(height):prune():tidy()
-)
---[[ not enough memory
-BzLen = Bz:normSq():sqrt():prune():tidy()
-Bz = (Bz / BzLen):prune():tidy()
---]]
-
-print'derivs:'
-print(sym.export.Lua:toFunc{func='latLonToCartesianTangentSpaceWGS84', output={
-	Bx[1], Bx[2], Bx[3],
-	By[1], By[2], By[3],
-	Bz[1], Bz[2], Bz[3],
-}, input={phi, lambda, height}})
-
-os.exit()
---	Bx = d/dphi map
---	By = d/dlambda map
---	Bz = -d/dheight map
-end
---]=]
-
 --[[
-latitude = phi in [-90,90]
-longitude = lambda in [-180,180]
 Bx = d/dphi points north
 By = d/dlambda points east
 Bz = -d/dheight points inwards
 --]]
-local function latLonToCartesianTangentSpaceWGS84(phi, lambda, height)
-	local cosLambda = math.cos(lambda)
-	local sinLambda = math.sin(lambda)
-
-	local cosPhi = math.cos(phi)
-	local sinPhi = math.sin(phi)
-	local dphi_cosPhi = -sinPhi
-	local dphi_sinPhi = cosPhi
-
-	local rCart = wgs84.a / math.sqrt(1 - wgs84.epssq * sinPhi * sinPhi)
-	local dphi_rCart = wgs84.a / math.sqrt(1 - wgs84.epssq * sinPhi * sinPhi)^3 * wgs84.epssq * sinPhi * dphi_sinPhi
-
-	local rCart_over_a = 1 / math.sqrt(1 - wgs84.epssq * sinPhi * sinPhi)
-
-	local xp = (rCart + height) * cosPhi
-	local dphi_xp = dphi_rCart * cosPhi + (rCart + height) * dphi_cosPhi
-	local dheight_xp = cosPhi
-	
-	local xp_over_a = (rCart_over_a + height / wgs84.a) * cosPhi
-
-	local zp = (rCart * (1 - wgs84.epssq) + height) * sinPhi
-	local dphi_zp = (dphi_rCart * (1 - wgs84.epssq)) * sinPhi + (rCart * (1 - wgs84.epssq) + height) * dphi_sinPhi
-	local dheight_zp = sinPhi
-
-	local zp_over_a = (rCart_over_a * (1 - wgs84.epssq) + height / wgs84.a) * sinPhi
-
-	local r2D = math.sqrt(xp * xp + zp * zp)
-	local dphi_r2D = (xp * dphi_xp + zp * dphi_zp) / r2D
-	local dheight_r2D = (xp * dheight_xp + zp * dheight_zp) / r2D
-	
-	local r2D_over_a = math.sqrt(xp_over_a * xp_over_a + zp_over_a * zp_over_a)
-	local dphi_r2D_over_a = (xp_over_a * dphi_xp + zp_over_a * dphi_zp) / r2D
-
-	local sinPhiSph = zp / r2D
-	local dphi_sinPhiSph = (dphi_zp * r2D - zp * dphi_r2D) / (r2D * r2D)
-	local dheight_sinPhiSph = (dheight_zp * r2D - zp * dheight_r2D) / (r2D * r2D)
-
-	local cosPhiSph = math.sqrt(1 - sinPhiSph * sinPhiSph)
-	--d/du sqrt(1 - x^2) = -x/sqrt(1 - x^2) dx/du
-	local dphi_cosPhiSph = -sinPhi / cosPhiSph * dphi_sinPhiSph
-	local dheight_cosPhiSph = -sinPhi / cosPhiSph * dheight_sinPhiSph
-
-	--local x = r2D * cosPhiSph / wgs84.a * cosLambda
-	--local y = r2D * cosPhiSph / wgs84.a * sinLambda
-	--local z = r2D * sinPhiSph / wgs84.a
-	
-	local dphi_x = (dphi_r2D_over_a * cosPhiSph + r2D_over_a * dphi_cosPhiSph) * cosLambda
-	local dphi_y = (dphi_r2D_over_a * cosPhiSph + r2D_over_a * dphi_cosPhiSph) * sinLambda
-	local dphi_z = (dphi_r2D_over_a * sinPhiSph + r2D_over_a * dphi_sinPhiSph)
-	
-	local dlambda_x = -sinLambda
-	local dlambda_y = cosLambda
-	
-	local dheight_x = (dheight_r2D * cosPhiSph + r2D * dheight_cosPhiSph) * cosLambda
-	local dheight_y = (dheight_r2D * cosPhiSph + r2D * dheight_cosPhiSph) * sinLambda
-	local dheight_z = (dheight_r2D * sinPhiSph + r2D * dheight_sinPhiSph)
-
-	return
-		vec3f(dphi_x, dphi_y, dphi_z),
-		vec3f(dlambda_x, dlambda_y, 0),
-		vec3f(-dheight_x, -dheight_y, -dheight_z)
-end
-
 
 local BStat = StatSet(
 	'mag', 'x', 'y', 'z', 'mag2d',
@@ -561,35 +379,66 @@ function Geom:init(args)
 	end
 end
 
-function Geom:draw()
-	local height = 0
-	local jres = 120
-	local ires = 60
-	--self.list = self.list or {}
-	--glCallOrRun(self.list, function()
-		for ibase=0,ires-1 do
-			gl.glBegin(gl.GL_TRIANGLE_STRIP)
-			for j=0,jres do
-				local v = j/jres
-				local lambda = math.rad((v * 2 - 1) * 180)
-				for iofs=1,0,-1 do
-					local i = ibase + iofs
-					local u = i/ires
-					local phi = math.rad((u * 2 - 1) * 90)
-					
-					local x,y,z = self:chart(phi, lambda, height)
-					gl.glTexCoord2f(v, u)
-					gl.glVertex3f(x, y, z)
+local charts = require 'geographic-charts'	-- TODO switch to this
+charts.Equirectangular:build()
+--charts.WGS84_a = wgs84.a
+charts['Azimuthal equidistant'].R = .5 * math.pi
+charts['Azimuthal equidistant']:build()
+if charts['Mollweide'].build then charts['Mollweide']:build() end
+if charts['WGS84'].build then charts['WGS84']:build() end
+
+for _,c in ipairs(charts) do
+	local oldChartFunc = c.chart
+	function c:chart(phi, lambda, height)
+		local x, y, z = oldChartFunc(self, math.deg(phi), math.deg(lambda), height)
+		x = x / charts.WGS84_a
+		y = y / charts.WGS84_a
+		z = z / charts.WGS84_a
+		return x, y, z
+	end
+	-- TODO why is there no consistent transform here?
+	local oldBasisFunc = c.basis
+	function c:basis(phi, lambda, height)
+		return oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
+	end
+	function c:draw()
+		local height = 0
+		local jres = 120
+		local ires = 60
+		--self.list = self.list or {}
+		--glCallOrRun(self.list, function()
+			for ibase=0,ires-1 do
+				gl.glBegin(gl.GL_TRIANGLE_STRIP)
+				for j=0,jres do
+					local v = j/jres
+					local lambda = math.rad((v * 2 - 1) * 180)
+					for iofs=1,0,-1 do
+						local i = ibase + iofs
+						local u = i/ires
+						local phi = math.rad((u * 2 - 1) * 90)
+
+						local x,y,z = self:chart(phi, lambda, height)
+						gl.glTexCoord2f(v, u)
+						gl.glVertex3f(x, y, z)
+					end
 				end
+				gl.glEnd()
 			end
-			gl.glEnd()
-		end
-	--end)
+		--end)
+	end
 end
 
 local geoms = {
+	charts.Equirectangular,
+	charts['Azimuthal equidistant'],
+	charts.Mollweide,
+	charts.WGS84,
+}
+--[=[
+local geoms = {
 	Geom{
 		name = 'Equirectangular',
+		chartObj = charts.Equirectangular,
 		R = 2/math.pi,
 		lambda0 = 0,
 		phi0 = 0,
@@ -601,16 +450,35 @@ local geoms = {
 			ig.luatableInputFloat('phi1', self, 'phi1')
 		end,
 		chart = function(self, phi, lambda, height)
+--[[
 			return self.R * (lambda - self.lambda0) * math.cos(self.phi1),
 				self.R * (phi - self.phi0),
 				height / wgs84.a
+--]]
+-- [[
+			local x, y, z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
+			x = x / charts.WGS84_a
+			y = y / charts.WGS84_a
+			z = z / charts.WGS84_a
+			return x,y,z
+--]]
 		end,
 		basis = function(self, phi, lambda, height)
 			-- Bx is north, By is east, Bz is down ... smh
+--[[
 			return
 				vec3f(0, 1, 0),
 				vec3f(1, 0, 0),
 				vec3f(0, 0, -1)
+--]]
+-- [[
+			local ex, ey, ez = self.chartObj:basis(math.deg(phi), math.deg(lambda), height)
+			-- in geographic-chrats.lua Chart.basis: "don't forget that GLSL is swapping the z-back for z-up" ... I forgot why I wrote that
+			-- TODO Equirectangular has a basis here of {0,1,0},{1,0,0},{0,0,-1}
+			-- but in geographic-charts it is {0,1,0},{1,0,0},{0,0,1}
+			-- but Mollweide has in both here and geographic-charts {0,1,0},{1,0,0},{0,0,-1}
+			return ex, ey, -ez
+--]]
 		end,
 		draw = function()
 			gl.glBegin(gl.GL_QUADS)
@@ -623,24 +491,54 @@ local geoms = {
 	},
 	Geom{
 		name = 'Azimuthal equidistant',
+		chartObj = charts['Azimuthal equidistant'],
 		chart = function(self, phi, lambda, height)
+--[[
 			local theta = .5 * math.pi - phi
-			return
+			local x,y,z =
 				math.cos(lambda) * theta,
 				math.sin(lambda) * theta,
 				height / wgs84.a
+			--print(x,y,z)
+			return x,y,z
+--]]
+-- [[
+			local x, y, z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
+			-- TODO is this the correct adjustment for height?
+			x = x / charts.WGS84_a
+			y = y / charts.WGS84_a
+			z = z / charts.WGS84_a
+			--print(x,y,z)
+			return x,y,z
+--]]
 		end,
+		-- phi = latitude radians = angle up from equator
+		-- lambda = longitude in radians = angle east of prime meridian
 		basis = function(self, phi, lambda, height)
+--[[
 			local cosLambda = math.cos(lambda)
 			local sinLambda = math.sin(lambda)
-			return
+			local ex, ey, ez =
 				vec3f(-cosLambda, -sinLambda, 0),	-- d/dphi
 				vec3f(-sinLambda, cosLambda, 0),	-- d/dlambda
 				vec3f(0, 0, -1)						-- d/dheight
+			print(ex, ey, ez)
+			return ex, ey, ez
+--]]
+-- [[
+			local ex, ey, ez = self.chartObj:basis(math.deg(phi), math.deg(lambda), height)
+			-- TODO why this transform?
+			-- and why not this transform for Equirectangular?
+			ex:set(-ex.y, ex.x, -ex.z)
+			ey:set(-ey.y, ey.x, -ey.z)
+			ez:set(-ez.y, ez.x, -ez.z)
+			return ex, ey, ez
+--]]
 		end,
 	},
 	Geom{
 		name = 'Mollweide',
+		chartObj = charts.Mollweide,
 		R = math.pi / 4,
 		lambda0 = 0,	-- in degrees
 		updateGUI = function(self)
@@ -648,40 +546,68 @@ local geoms = {
 			ig.luatableInputFloat('lambda0', self, 'lambda0')
 		end,
 		chart = function(self, phi, lambda, height)
+--[[
 			local theta = phi
 			for i=1,10 do
 				local dtheta = (2 * theta + math.sin(2 * theta) - math.pi * math.sin(phi)) / (2 + 2 * math.cos(theta))
 				if math.abs(dtheta) < 1e-5 then break end
 				theta = theta - dtheta
 			end
-			
+
 			lambda = lambda - math.rad(self.lambda0)
-			--[[ dumb and not working
-			while lambda > math.pi do lambda = lambda - 2*math.pi end
-			while lambda < -math.pi do lambda = lambda + 2*math.pi end
-			--]]
 
 			local x = self.R * math.sqrt(8) / math.pi * lambda * math.cos(theta)
 			local y = self.R * math.sqrt(2) * math.sin(theta)
 			return x, y, height / wgs84.a
+--]]
+-- [[
+			local x,y,z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
+			x = x / charts.WGS84_a
+			y = y / charts.WGS84_a
+			z = z / charts.WGS84_a
+			return x, y, z
+--]]
 		end,
 		basis = function(self, phi, lambda, height)
+--[[
 			return
 				vec3f(0, 1, 0),
 				vec3f(1, 0, 0),
 				vec3f(0, 0, -1)
+--]]
+-- [[
+			return self.chartObj:basis(math.deg(phi), math.deg(lambda), height)
+--]]
 		end,
 	},
 	Geom{
 		name = 'WGS84',
+		chartObj = charts['WGS84'],
 		chart = function(self, phi, lambda, height)
+--[[
 			return latLonToCartesianWGS84(phi, lambda, height)
+--]]
+-- [[
+			local x,y,z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
+			x = x / charts.WGS84_a
+			y = y / charts.WGS84_a
+			z = z / charts.WGS84_a
+			return x, y, z
+--]]
 		end,
 		basis = function(self, phi, lambda, height)
-			return latLonToCartesianTangentSpaceWGS84(phi, lambda, height)
+--[[
+			local ex, ey, ez = latLonToCartesianTangentSpaceWGS84(phi, lambda, height)
+			return ex, ey, ez
+--]]
+-- [[
+			local ex,ey,ez = self.chartObj:basis(math.deg(phi), math.deg(lambda), height)
+			return ex,ey,ez
+--]]
 		end,
 	},
 }
+--]=]
 
 local gradients = {
 	{
@@ -698,6 +624,7 @@ local gradients = {
 			local image = require 'image'(
 				n, 1, 4, 'unsigned char', function(u)
 					local s = (u+.5)/n
+					-- TODO this but in shader so we can dynamically change it
 					if bit.band(u, 15) == 0 then
 						return 255*(1-s),127,255*s,255
 					else
@@ -858,12 +785,12 @@ void main() {
 
 	do
 		print'generating B field...'
-		
+
 		-- can be arbitrary
 		-- but the WMM model is for 15 mins, so [360,180] x4
 		londim = 1440
 		latdim = 720
-		
+
 		local fbo = require 'gl.fbo'()
 			:unbind()
 glreport'here'
@@ -890,7 +817,7 @@ glreport'here'
 			},
 		}
 glreport'here'
-	
+
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			resetProjection = true,
@@ -898,7 +825,7 @@ glreport'here'
 			dest = Btex,
 		}
 glreport'here'
-	
+
 		Btex
 			:bind()
 			:generateMipmap()
@@ -906,7 +833,7 @@ glreport'here'
 glreport'here'
 
 -- [=[ hmm, better way than copy paste?
-		
+
 		print'generating div B and curl B...'
 
 		local calcB2Shader = GLProgram{
@@ -933,7 +860,7 @@ varying vec2 texcoordv;
 void main() {
 	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
 	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
-	
+
 	vec3 plh = vec3(phi, lambda, 0.);
 
 	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / dphi.x / (wgs84_a * cos(plh.x));
@@ -985,7 +912,7 @@ glreport'here'
 			},
 		}
 glreport'here'
-	
+
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			resetProjection = true,
@@ -999,16 +926,16 @@ glreport'here'
 		local Bdata = ffi.new('vec3f_t[?]', londim * latdim)
 		Btex:toCPU(Bdata)
 glreport'here'
-		
+
 glreport'here'
-		
+
 		--B2tex:generateMipmap()
 
 		local B2data = ffi.new('vec4f_t[?]', londim * latdim)
 		B2tex:bind()
 		B2tex:toCPU(B2data)
 glreport'here'
-		
+
 		B2tex:unbind()
 glreport'here'
 
@@ -1043,7 +970,7 @@ glreport'here'
 
 --[==[	-- plotting the bins
 		local Bin = require 'stat.bin'
-	
+
 		local binCount = 100
 		local bins = table.mapi(BStat, function(stat,k)
 			return Bin(
@@ -1144,76 +1071,6 @@ uniform sampler2D B2tex;
 uniform sampler1D hsvtex;
 uniform float alpha;
 
-mat3 latLonToCartesianTangentSpaceWGS84(vec3 plh) {
-	float phi = plh.x;
-	float lambda = plh.y;
-	float height = plh.z;
-
-	float cosLambda = cos(lambda);
-	float sinLambda = sin(lambda);
-
-	float cosPhi = cos(phi);
-	float sinPhi = sin(phi);
-	float dphi_cosPhi = -sinPhi;
-	float dphi_sinPhi = cosPhi;
-
-	float rCart = wgs84_a / sqrt(1. - wgs84_epssq * sinPhi * sinPhi);
-	float tmp = sqrt(1. - wgs84_epssq * sinPhi * sinPhi);
-	float dphi_rCart = wgs84_a / (tmp*tmp*tmp) * wgs84_epssq * sinPhi * dphi_sinPhi;
-
-	float rCart_over_a = 1. / sqrt(1. - wgs84_epssq * sinPhi * sinPhi);
-
-	float xp = (rCart + height) * cosPhi;
-	float dphi_xp = dphi_rCart * cosPhi + (rCart + height) * dphi_cosPhi;
-	float dheight_xp = cosPhi;
-
-	float xp_over_a = (rCart_over_a + height / wgs84_a) * cosPhi;
-
-	float zp = (rCart * (1. - wgs84_epssq) + height) * sinPhi;
-	float dphi_zp = (dphi_rCart * (1. - wgs84_epssq)) * sinPhi + (rCart * (1. - wgs84_epssq) + height) * dphi_sinPhi;
-	float dheight_zp = sinPhi;
-
-	float zp_over_a = (rCart_over_a * (1. - wgs84_epssq) + height / wgs84_a) * sinPhi;
-
-	float r2D = sqrt(xp * xp + zp * zp);
-	float dphi_r2D = (xp * dphi_xp + zp * dphi_zp) / r2D;
-	float dheight_r2D = (xp * dheight_xp + zp * dheight_zp) / r2D;
-
-	float r2D_over_a = sqrt(xp_over_a * xp_over_a + zp_over_a * zp_over_a);
-	float dphi_r2D_over_a = (xp_over_a * dphi_xp + zp_over_a * dphi_zp) / r2D;
-
-	float sinPhiSph = zp / r2D;
-	float dphi_sinPhiSph = (dphi_zp * r2D - zp * dphi_r2D) / (r2D * r2D);
-	float dheight_sinPhiSph = (dheight_zp * r2D - zp * dheight_r2D) / (r2D * r2D);
-
-	float cosPhiSph = sqrt(1. - sinPhiSph * sinPhiSph);
-	// d/du sqrt(1 - x^2) = -x/sqrt(1 - x^2) dx/du;
-	float dphi_cosPhiSph = -sinPhi / cosPhiSph * dphi_sinPhiSph;
-	float dheight_cosPhiSph = -sinPhi / cosPhiSph * dheight_sinPhiSph;
-
-	// float x = r2D * cosPhiSph / wgs84_a * cosLambda;
-	// float y = r2D * cosPhiSph / wgs84_a * sinLambda;
-	// float z = r2D * sinPhiSph / wgs84_a;
-
-	float dphi_x = (dphi_r2D_over_a * cosPhiSph + r2D_over_a * dphi_cosPhiSph) * cosLambda;
-	float dphi_y = (dphi_r2D_over_a * cosPhiSph + r2D_over_a * dphi_cosPhiSph) * sinLambda;
-	float dphi_z = (dphi_r2D_over_a * sinPhiSph + r2D_over_a * dphi_sinPhiSph);
-
-	float dlambda_x = -sinLambda;
-	float dlambda_y = cosLambda;
-
-	float dheight_x = (dheight_r2D * cosPhiSph + r2D * dheight_cosPhiSph) * cosLambda;
-	float dheight_y = (dheight_r2D * cosPhiSph + r2D * dheight_cosPhiSph) * sinLambda;
-	float dheight_z = (dheight_r2D * sinPhiSph + r2D * dheight_sinPhiSph);
-
-	return mat3(
-		vec3(dphi_x, dphi_y, dphi_z),
-		vec3(dlambda_x, dlambda_y, 0),
-		vec3(-dheight_x, -dheight_y, -dheight_z)
-	);
-}
-
-
 void main() {
 	float s = .5;
 	float hsvBlend = .5;
@@ -1228,18 +1085,10 @@ void main() {
 		0.
 	);
 	vec3 B = calcB(plh);
-
-#if 0
-	mat3 e = latLonToCartesianTangentSpaceWGS84(plh);
-	//TODO orthonormalize e
-	//then TODO sample along each direction
-	//then TODO convert from cartesian back to plh
-#endif
-
 #endif
 
 	<?=overlay.code?>
-	
+
 	gl_FragColor = mix(
 		texture2D(earthtex, vec2(texcoordv.x, 1. - texcoordv.y)),
 		texture1D(hsvtex, s),
@@ -1295,15 +1144,15 @@ local function drawReading(info)
 	local x,y,z = geom:chart(phi, lambda, height)
 	local ex, ey, ez = geom:basis(phi, lambda, height)
 	local H = (ex * math.cos(headingRad) + ey * math.sin(headingRad)) * .2
-	
+
 	gl.glColor3f(1,1,0)
-	
+
 	-- TODO geom should be transforms, and apply to all geom rendered
 	gl.glPointSize(5)
 	gl.glBegin(gl.GL_POINTS)
-	
+
 	gl.glVertex3f(x, y, z)
-	
+
 	gl.glEnd()
 	gl.glPointSize(1)
 
@@ -1318,10 +1167,11 @@ local function drawReading(info)
 	gl.glVertex3f(x, y, z)
 	gl.glVertex3f(x + H.x, y + H.y, z + H.z)
 	gl.glEnd()
-	
+
 	-- now use wgs84 here regardless of 'geom'
-	local pos = vec3f(latLonToCartesianWGS84(phi, lambda, height))
-	local ex, ey, ez = latLonToCartesianTangentSpaceWGS84(phi, lambda, .1)
+	--local pos = vec3f(latLonToCartesianWGS84(phi, lambda, height))
+	local pos = vec3f(charts.WGS84:chart(math.rad(phi), math.rad(lambda), height)) / charts.WGS84_a
+	local ex, ey, ez = charts.WGS84:basis(math.rad(phi), math.rad(lambda), .1)
 	local H = (ex * math.cos(headingRad) + ey * math.sin(headingRad)) * .2
 
 	local axis = pos:cross(H):normalize()
@@ -1330,19 +1180,19 @@ local function drawReading(info)
 	local numSteps = 90
 	local dtheta = degToSpan / numSteps
 	local q = quatf():fromAngleAxis(axis.x, axis.y, axis.z, dtheta)
-	
+
 	-- draw north vs magnetic north heading
 	gl.glColor3f(1,1,1)
 	gl.glBegin(gl.GL_LINE_STRIP)
 
 	gl.glVertex3f(geom:chart(cartesianToLatLonWGS84(pos:unpack())))
 	for i=1,numSteps do
-		
+
 		q:rotate(pos, pos)
 --print(pos, geom:chart(cartesianToLatLonWGS84(pos:unpack())))
 		gl.glVertex3f(geom:chart(cartesianToLatLonWGS84(pos:unpack())))
 	end
-	
+
 	--[[
 	ok how to do this?  geodesics and connections?  rotate spherical coordinates for now?
 	so
@@ -1387,7 +1237,7 @@ local function drawVectorField(geom)
 			Bx = Bx * scale	-- north component
 			By = By * scale	-- east component
 			Bz = Bz * scale	-- down component
-			
+
 			local ex, ey, ez = geom:basis(phi, lambda, height)
 
 			--[[ verify the basis is correct
@@ -1458,7 +1308,7 @@ function App:update(...)
 	if guivars.doDrawVectorField then
 		drawVectorField(geom)
 	end
-	
+
 	shader:use()
 
 	gl.glUniform1f(shader.uniforms.alpha.loc, guivars.drawAlpha)
@@ -1472,7 +1322,7 @@ function App:update(...)
 	Btex:unbind(2)
 	gradtex:unbind(1)
 	earthtex:unbind(0)
-	
+
 	shader:useNone()
 
 	glreport'here'
@@ -1482,7 +1332,7 @@ function App:update(...)
 end
 
 function App:updateGUI()
-	
+
 	local thisTime = os.time()
 	if thisTime ~= self.lastTime then
 		if self.lastTime then
@@ -1512,14 +1362,14 @@ function App:updateGUI()
 	end
 
 	ig.igSeparator()
-	
+
 	ig.igText'overlay'
 	for i,overlay in ipairs(overlays) do
 		ig.luatableRadioButton(overlay.name, guivars, 'overlayIndex', i-1)
 	end
-	
+
 	ig.igSeparator()
-	
+
 	ig.igText'gradient'
 	for i,grad in ipairs(gradients) do
 		ig.luatableRadioButton(grad.name, guivars, 'gradientIndex', i-1)
@@ -1532,7 +1382,7 @@ function App:updateGUI()
 	-- how linear are the g and h coeffs?
 	-- can I just factor out the dt?
 	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
-	ig.luatableSliderFloat('time from '..tostring(wmm.epoch), guivars, 'fieldDT', 0, 5)
+	ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', 0, 20)
 end
 
 return App():run()
