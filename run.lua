@@ -828,7 +828,7 @@ void main() {
 
 	path'calc_b.postproc.frag':write(calcBFragmentCode)
 
-	
+
 	self.quadGeom = GLGeometry{
 		mode = gl.GL_TRIANGLE_STRIP,
 		vertexes = {
@@ -841,7 +841,7 @@ void main() {
 			dim = 2,
 		},
 	}
-	
+
 	self.unitProjMat= matrix_ffi({4,4}, 'float'):zeros():setOrtho(0, 1, 0, 1, 0, 1)
 
 	do
@@ -883,7 +883,7 @@ glreport'here'
 			},
 		}
 glreport'here'
-		
+
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			resetProjection = true,	-- not gles compat
@@ -1008,7 +1008,7 @@ glreport'here'
 			},
 		}
 glreport'here'
-		
+
 		-- only used for stat calc
 		local B2data = ffi.new('vec4f_t[?]', londim * latdim)
 
@@ -1281,12 +1281,41 @@ void main() {
 			count = 2,
 			size = 2 * 3 * ffi.sizeof'float',
 			type = gl.GL_FLOAT,
-			data = ffi.new('vec3f_t[?]', 2),	
+			data = ffi.new('vec3f_t[?]', 2),
 		},
 		geometry = {
 			mode = gl.GL_LINES,
 		},
 	}
+
+	self.vectorFieldShader = GLProgram{
+		version = 'latest',
+		header = 'precision highp float;',
+		vertexCode = [[
+layout(location=0) in vec2 vertex;
+in vec3 pos;
+in vec3 BCoeffs, ex, ey, ez;
+uniform mat4 mvProjMat;
+uniform float arrowScale;
+uniform float fieldZScale;
+void main() {
+	vec3 B = arrowScale * (
+		  ex * BCoeffs.x
+		+ ey * BCoeffs.y
+		+ ez * (BCoeffs.z * fieldZScale)
+	);
+	gl_Position = mvProjMat * vec4(
+		pos + vertex.x * B + vertex.y * vec3(-B.y, B.x, 0.),
+		1.);
+}
+]],
+		fragmentCode = [[
+out vec4 fragColor;
+void main() {
+	fragColor = vec4(1., 1., 1., 1.);
+}
+]],
+	}:useNone()
 
 	gl.glEnable(gl.GL_CULL_FACE)
 	gl.glEnable(gl.GL_DEPTH_TEST)
@@ -1326,7 +1355,7 @@ local function drawReading(info)
 	self.pointSceneObj:draw()
 
 	self.lineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-	
+
 	self.lineSceneObj.uniforms.color = {0,0,1}
 	self.lineSceneObj.vertexes.buffer.data[0]:set(x,y,z)
 	self.lineSceneObj.vertexes.buffer.data[1]:set(x + ex.x * .2, y + ex.y * .2, z + ex.z * .2)
@@ -1409,11 +1438,13 @@ local function drawVectorField(geom, app)
 	local scale = guivars.arrowScale  / (BStat.mag.max * ires)
 --	geom.list = geom.list or {}
 --	glCallOrRun(geom.list, function()
-	
-	gl.glMatrixMode(gl.GL_PROJECTION)
-	gl.glLoadMatrixf(app.view.projMat.ptr)
-	gl.glMatrixMode(gl.GL_MODELVIEW)
-	gl.glLoadMatrixf(app.view.mvMat.ptr)
+
+	app.vectorFieldShader:use()
+	app.vectorFieldShader:setUniforms{
+		mvProjMat = app.view.mvProjMat.ptr,
+		arrowScale = scale,
+		fieldZScale = guivars.fieldZScale,
+	}
 
 	gl.glBegin(gl.GL_LINES)
 	for i=0,ires do
@@ -1423,14 +1454,17 @@ local function drawVectorField(geom, app)
 			local v = j/jres
 			local lambda = math.rad((v * 2 - 1) * 180)
 			local x,y,z = geom:chart(phi, lambda, 0)
-			gl.glTexCoord2f(u,v)
+			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.pos.loc, x, y, z)
+
+			--gl.glTexCoord2f(u,v)
 			-- TODO calc B here, and add here
-			local Bx, By, Bz = calcB(phi, lambda, height)
-			Bx = Bx * scale	-- north component
-			By = By * scale	-- east component
-			Bz = Bz * scale	-- down component
+			local Bx, By, Bz = calcB(phi, lambda, height)	-- north, east, down component
+			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.BCoeffs.loc, Bx, By, Bz)
 
 			local ex, ey, ez = geom:basis(phi, lambda, height)
+			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.ex.loc, ex:unpack())
+			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.ey.loc, ey:unpack())
+			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.ez.loc, ez:unpack())
 
 			--[[ verify the basis is correct
 			scale = 3 / jres
@@ -1439,22 +1473,17 @@ local function drawVectorField(geom, app)
 			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ez.x * scale, y + ez.y * scale, z + ez.z * scale)
 			--]]
 			-- [[ draw our arrow
-			local B = ex * Bx
-				+ ey * By
-				+ ez * Bz * guivars.fieldZScale
-
+			-- TODO instanced geometry?  any faster?
 			for _,q in ipairs(arrow) do
-				local s, t = q[1], q[2]
-				gl.glVertex3f(
-					x + B.x * s - B.y * t,
-					y + B.y * s + B.x * t,
-					z + B.z * s)
+				gl.glVertex2f(q[1], q[2])
 			end
 			--]]
 		end
 	end
 	gl.glEnd()
 --	end)
+
+	GLProgram:useNone()
 end
 
 
