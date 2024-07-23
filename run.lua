@@ -1299,12 +1299,18 @@ uniform mat4 mvProjMat;
 uniform float arrowScale;
 uniform float fieldZScale;
 
+#if 1	// B coeffs using attributes
 in vec3 BCoeffs;
-//in vec2 coords;
-//layout(binding=0) uniform sampler2D BTex;
+#endif
+#if 0	// B coeffs using textures
+in vec2 coords;
+uniform sampler2D BTex;
+#endif
 
 void main() {
-	//vec3 BCoeffs = texture(BTex, coords).xyz;
+#if 0	// B coeffs using textures
+	vec3 BCoeffs = texture(BTex, coords).xyz;
+#endif
 	vec3 B = arrowScale * (
 		  ex * BCoeffs.x
 		+ ey * BCoeffs.y
@@ -1321,6 +1327,9 @@ void main() {
 	fragColor = vec4(1., 1., 1., 1.);
 }
 ]],
+		uniforms = {
+			BTex = 0,
+		},
 	}:useNone()
 
 	gl.glEnable(gl.GL_CULL_FACE)
@@ -1442,8 +1451,6 @@ local function drawVectorField(geom, app)
 	local jres = 60
 	local ires = 30
 	local scale = guivars.arrowScale  / (BStat.mag.max * ires)
---	geom.list = geom.list or {}
---	glCallOrRun(geom.list, function()
 
 	local shader = app.vectorFieldShader
 	shader:use()
@@ -1452,21 +1459,26 @@ local function drawVectorField(geom, app)
 		arrowScale = scale,
 		fieldZScale = guivars.fieldZScale,
 	}
-	--BTex:bind()
+	--[[ B coeffs using textures
+	BTex:bind()
+	--]]
 
 	gl.glBegin(gl.GL_LINES)
-	for i=0,ires do
-		local u = i/ires
+	for i=0,ires-1 do
+		local u = (i + .5) / ires
 		local phi = math.rad((u * 2 - 1) * 90)
-		for j=0,jres do
-			local v = j/jres
+		for j=0,jres-1 do
+			local v = (j + .5) / jres
 			local lambda = math.rad((v * 2 - 1) * 180)
 			local x,y,z = geom:chart(phi, lambda, 0)
 			gl.glVertexAttrib3f(shader.attrs.pos.loc, x, y, z)
 
-			--gl.glVertexAttrib2f(shader.attrs.coords.loc, u, v)
-			-- TODO calc B here, and add here
+			-- [[ B coeffs using attributes
 			gl.glVertexAttrib3f(shader.attrs.BCoeffs.loc, calcB(phi, lambda, height))	-- B field = north, east, down component
+			--]]
+			--[[ B coeffs using textures
+			gl.glVertexAttrib2f(shader.attrs.coords.loc, u, v)
+			--]]
 
 			local ex, ey, ez = geom:basis(phi, lambda, height)
 			gl.glVertexAttrib3f(shader.attrs.ex.loc, ex:unpack())
@@ -1488,9 +1500,10 @@ local function drawVectorField(geom, app)
 		end
 	end
 	gl.glEnd()
---	end)
 
-	--BTex:unbind()
+	--[[ B coeffs using textures
+	BTex:unbind()
+	--]]
 	shader:useNone()
 end
 
