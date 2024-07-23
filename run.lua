@@ -344,8 +344,8 @@ local BStat = StatSet(
 local londim -- dimension in 2D x dir / spherical phi / globe lambda dir
 local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
 
-local Btex
-local B2tex
+local BTex
+local B2Tex
 
 
 local earthtex
@@ -869,7 +869,7 @@ glreport'here'
 		calcBShader:useNone()
 glreport'here'
 
-		Btex = GLTex2D{
+		BTex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
@@ -888,7 +888,7 @@ glreport'here'
 			viewport = {0, 0, londim, latdim},
 			resetProjection = true,	-- not gles compat
 			shader = calcBShader,
-			dest = Btex,
+			dest = BTex,
 			--[[
 			callback = function()
 				self.quadGeom:draw()
@@ -898,7 +898,7 @@ glreport'here'
 glreport'here'
 
 		-- can I generate the mipmaps of the fbo dest while the fbo is still attached to it?
-		Btex
+		BTex
 			:bind()
 			:generateMipmap()
 			:unbind()
@@ -909,16 +909,16 @@ glreport'here'
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			shader = calcBShader,
-			dest = Btex,
+			dest = BTex,
 			callback = function()
-				gl.glReadPixels(0, 0, Btex.width, Btex.height, gl.GL_RGBA, gl.GL_FLOAT, Bdata)
+				gl.glReadPixels(0, 0, BTex.width, BTex.height, gl.GL_RGBA, gl.GL_FLOAT, Bdata)
 			end,
 		}
 		--]]
 		-- [[ read with getteximage
-		Btex:bind()
+		BTex:bind()
 			:toCPU(Bdata)
-		Btex:unbind()
+		BTex:unbind()
 		print'Bdata'
 		for i=0,londim*latdim-1 do
 			--print(Bdata[i])
@@ -994,7 +994,7 @@ glreport'here'
 		calcB2Shader:useNone()
 glreport'here'
 
-		B2tex = GLTex2D{
+		B2Tex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
@@ -1015,25 +1015,25 @@ glreport'here'
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			resetProjection = true,	-- not gles compat
-			dest = B2tex,
+			dest = B2Tex,
 			--[=[
 			callback = function()
 				calcB2Shader:use()
 				self.quadGeom:draw()
 				calcB2Shader:useNone()
 				--[[ read with readpixels
-				gl.glReadPixels(0, 0, B2tex.width, B2tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2data)
+				gl.glReadPixels(0, 0, B2Tex.width, B2Tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2data)
 				--]]
 			end,
 			--]=]
 		}
 glreport'here'
 		-- [[ read with getteximage
-		B2tex:bind()
+		B2Tex:bind()
 glreport'here'
-		B2tex:toCPU(B2data)
+		B2Tex:toCPU(B2data)
 glreport'here'
-		B2tex:unbind()
+		B2Tex:unbind()
 glreport'here'
 		print'B2data'
 		for i=0,londim*latdim-1 do
@@ -1042,7 +1042,7 @@ glreport'here'
 		--]]
 glreport'here'
 
-		--B2tex:generateMipmap()
+		--B2Tex:generateMipmap()
 
 		local statgens = table{
 			function(B, B2) return B:length() end,
@@ -1170,8 +1170,8 @@ in vec2 texcoordv;
 out vec4 fragColor;
 
 uniform sampler2D earthTex;
-uniform sampler2D Btex;
-uniform sampler2D B2tex;
+uniform sampler2D BTex;
+uniform sampler2D B2Tex;
 uniform sampler2D gradTex;
 uniform float alpha;
 
@@ -1179,9 +1179,9 @@ void main() {
 	float s = .5;
 	float hsvBlend = .5;
 
-	vec4 B2 = texture(B2tex, texcoordv);
+	vec4 B2 = texture(B2Tex, texcoordv);
 #ifndef CALC_B_ON_GPU
-	vec4 B = texture(Btex, texcoordv);
+	vec4 B = texture(BTex, texcoordv);
 #else
 	vec3 plh = vec3(
 		(texcoordv.y - .5) * M_PI,			//phi
@@ -1207,8 +1207,8 @@ void main() {
 			uniforms = {
 				earthTex = 0,
 				gradTex = 1,
-				Btex = 2,
-				B2tex = 3,
+				BTex = 2,
+				B2Tex = 3,
 				alpha = 1,
 				dt = 0,
 			},
@@ -1294,11 +1294,17 @@ void main() {
 		vertexCode = [[
 layout(location=0) in vec2 vertex;
 in vec3 pos;
-in vec3 BCoeffs, ex, ey, ez;
+in vec3 ex, ey, ez;
 uniform mat4 mvProjMat;
 uniform float arrowScale;
 uniform float fieldZScale;
+
+in vec3 BCoeffs;
+//in vec2 coords;
+//layout(binding=0) uniform sampler2D BTex;
+
 void main() {
+	//vec3 BCoeffs = texture(BTex, coords).xyz;
 	vec3 B = arrowScale * (
 		  ex * BCoeffs.x
 		+ ey * BCoeffs.y
@@ -1439,12 +1445,14 @@ local function drawVectorField(geom, app)
 --	geom.list = geom.list or {}
 --	glCallOrRun(geom.list, function()
 
-	app.vectorFieldShader:use()
-	app.vectorFieldShader:setUniforms{
+	local shader = app.vectorFieldShader
+	shader:use()
+	shader:setUniforms{
 		mvProjMat = app.view.mvProjMat.ptr,
 		arrowScale = scale,
 		fieldZScale = guivars.fieldZScale,
 	}
+	--BTex:bind()
 
 	gl.glBegin(gl.GL_LINES)
 	for i=0,ires do
@@ -1454,17 +1462,16 @@ local function drawVectorField(geom, app)
 			local v = j/jres
 			local lambda = math.rad((v * 2 - 1) * 180)
 			local x,y,z = geom:chart(phi, lambda, 0)
-			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.pos.loc, x, y, z)
+			gl.glVertexAttrib3f(shader.attrs.pos.loc, x, y, z)
 
-			--gl.glTexCoord2f(u,v)
+			--gl.glVertexAttrib2f(shader.attrs.coords.loc, u, v)
 			-- TODO calc B here, and add here
-			local Bx, By, Bz = calcB(phi, lambda, height)	-- north, east, down component
-			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.BCoeffs.loc, Bx, By, Bz)
+			gl.glVertexAttrib3f(shader.attrs.BCoeffs.loc, calcB(phi, lambda, height))	-- B field = north, east, down component
 
 			local ex, ey, ez = geom:basis(phi, lambda, height)
-			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.ex.loc, ex:unpack())
-			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.ey.loc, ey:unpack())
-			gl.glVertexAttrib3f(app.vectorFieldShader.attrs.ez.loc, ez:unpack())
+			gl.glVertexAttrib3f(shader.attrs.ex.loc, ex:unpack())
+			gl.glVertexAttrib3f(shader.attrs.ey.loc, ey:unpack())
+			gl.glVertexAttrib3f(shader.attrs.ez.loc, ez:unpack())
 
 			--[[ verify the basis is correct
 			scale = 3 / jres
@@ -1483,7 +1490,8 @@ local function drawVectorField(geom, app)
 	gl.glEnd()
 --	end)
 
-	GLProgram:useNone()
+	--BTex:unbind()
+	shader:useNone()
 end
 
 
@@ -1502,8 +1510,8 @@ function App:update(...)
 
 	earthtex:bind(0)
 	gradtex:bind(1)
-	Btex:bind(2)
-	B2tex:bind(3)
+	BTex:bind(2)
+	B2Tex:bind(3)
 
 	gl.glUniform1f(shader.uniforms.alpha.loc, 1)
 
@@ -1539,8 +1547,8 @@ function App:update(...)
 	gl.glCullFace(gl.GL_BACK)
 	geom:draw(self)
 
-	B2tex:unbind(3)
-	Btex:unbind(2)
+	B2Tex:unbind(3)
+	BTex:unbind(2)
 	gradtex:unbind(1)
 	earthtex:unbind(0)
 
