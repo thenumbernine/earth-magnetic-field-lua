@@ -1,19 +1,22 @@
 #!/usr/bin/env luajit
+local cmdline = require 'ext.cmdline'(...)
+local gl = require 'gl.setup'(cmdline.gl or 'OpenGL')
 local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
 local vec4f = require 'vec-ffi.vec4f'
 local quatf = require 'vec-ffi.quatf'
+local matrix_ffi = require 'matrix.ffi'
 local template = require 'template'
 local class = require 'ext.class'
 local table = require 'ext.table'
 local string = require 'ext.string'
 local path = require 'ext.path'
-local gl = require 'gl'
 local glreport = require 'gl.report'
 local ig = require 'imgui'
 local GLTex2D = require 'gl.tex2d'
 local GLProgram = require 'gl.program'
-local glCallOrRun = require 'gl.call'
+local GLGeometry = require 'gl.geometry'
+local GLSceneObject = require 'gl.sceneobject'
 local clnumber = require 'cl.obj.number'
 local StatSet = require 'stat.set'
 
@@ -348,7 +351,7 @@ local B2tex
 local earthtex
 
 local App = require 'imguiapp.withorbit'()
-
+App.viewUseBuiltinMatrixMath = true
 App.title = 'EM field'
 
 
@@ -396,35 +399,28 @@ for _,c in ipairs(charts) do
 		z = z / charts.WGS84_a
 		return x, y, z
 	end
-	-- TODO why is there no consistent transform here?
-	local oldBasisFunc = c.basis
-	function c:basis(phi, lambda, height)
-		return oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
-	end
-	function c:draw()
-		local height = 0
-		local jres = 120
-		local ires = 60
-		--self.list = self.list or {}
-		--glCallOrRun(self.list, function()
-			for ibase=0,ires-1 do
-				gl.glBegin(gl.GL_TRIANGLE_STRIP)
-				for j=0,jres do
-					local v = j/jres
-					local lambda = math.rad((v * 2 - 1) * 180)
-					for iofs=1,0,-1 do
-						local i = ibase + iofs
-						local u = i/ires
-						local phi = math.rad((u * 2 - 1) * 90)
 
-						local x,y,z = self:chart(phi, lambda, height)
-						gl.glTexCoord2f(v, u)
-						gl.glVertex3f(x, y, z)
-					end
-				end
-				gl.glEnd()
-			end
-		--end)
+	local oldBasisFunc = c.basis
+	-- TODO why is there no consistent transform here?
+	if c == charts.Equirectangular then
+		function c:basis(phi, lambda, height)
+			local ex, ey, ez = oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
+			return ex, ey, -ez
+		end
+	elseif c == charts['Azimuthal equidistant'] then
+		function c:basis(phi, lambda, height)
+			local ex, ey, ez = oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
+			-- TODO why this transform?
+			-- and why not this transform for Equirectangular?
+			ex:set(-ex.y, ex.x, -ex.z)
+			ey:set(-ey.y, ey.x, -ey.z)
+			ez:set(-ez.y, ez.x, -ez.z)
+			return ex, ey, ez
+		end
+	else
+		function c:basis(phi, lambda, height)
+			return oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
+		end
 	end
 end
 
@@ -613,7 +609,7 @@ local gradients = {
 	{
 		name = 'rainbow',
 		gen = function()
-			return require 'gl.hsvtex'(256)
+			return require 'gl.hsvtex2d'(256):unbind()
 		end,
 	},
 	{
@@ -632,10 +628,11 @@ local gradients = {
 					end
 				end
 			)
-			return require 'gl.tex1d'{
+			return require 'gl.tex2d'{
 				--image = image,
 				data = image.buffer,
 				width = image.width,
+				height = 1,
 
 				internalFormat = gl.GL_RGBA,
 				format = gl.GL_RGBA,
@@ -648,7 +645,7 @@ local gradients = {
 					t = gl.GL_CLAMP_TO_EDGE,
 				},
 				generateMipmap = true,
-			}
+			}:unbind()
 		end,
 	},
 }
@@ -722,6 +719,59 @@ local overlays = {
 	},
 }
 
+for _,c in ipairs(charts) do
+	function c:draw(app)
+		local height = 0
+		local jres = 120
+		local ires = 60
+		if not self.sceneobjs then
+			self.sceneobjs = table()
+			for ibase=0,ires-1 do
+				local vertexes = table()
+				local texcoords = table()
+				for j=0,jres do
+					local v = j/jres
+					local lambda = math.rad((v * 2 - 1) * 180)
+					for iofs=1,0,-1 do
+						local i = ibase + iofs
+						local u = i/ires
+						local phi = math.rad((u * 2 - 1) * 90)
+
+						local x,y,z = self:chart(phi, lambda, height)
+						texcoords:append{v, u}
+						vertexes:append{x, y, z}
+					end
+				end
+				self.sceneobjs:insert(GLSceneObject{
+					-- TODO make sure all shaders have same attributes at same locations for this to be able to interchange its shaders
+					program = assert(overlays[tonumber(guivars.overlayIndex)+1]).shader,
+					vertexes = {
+						data = vertexes,
+						count = #vertexes / 3,
+						dim = 3,
+					},
+					geometry = {
+						mode = gl.GL_TRIANGLE_STRIP,
+					},
+					attrs = {
+						texcoord = {
+							buffer = {
+								data = texcoords,
+								count = #texcoords / 2,
+								dim = 2,
+							},
+						},
+					},
+				})
+			end
+		end
+		for _,sceneobj in ipairs(self.sceneobjs) do
+			sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
+			sceneobj:draw()
+		end
+	end
+end
+
 
 function App:initGL(...)
 	if App.super.initGL then
@@ -744,30 +794,29 @@ function App:initGL(...)
 	local calc_b_shader = path'calc_b.shader':read()
 
 	local vertexCode = [[
-varying vec2 texcoordv;
-
+layout(location=0) in vec3 vertex;
+layout(location=1) in vec2 texcoord;
+out vec2 texcoordv;
+uniform mat4 mvProjMat;
 void main() {
-	texcoordv = gl_MultiTexCoord0.xy;
-	gl_Position = ftransform();
+	texcoordv = texcoord;
+	gl_Position = mvProjMat * vec4(vertex, 1.);
 }
 ]]
-	local calcBFragmentCode = template(
-[[
-#version 120
-
+	local calcBFragmentCode = template([[
 uniform float dt;
 
 ]]..calc_b_shader..[[
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
-varying vec2 texcoordv;
-
+in vec2 texcoordv;
+out vec4 fragColor;
 void main() {
 	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
 	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
 	vec3 B = calcB(vec3(phi, lambda, 0.));
-	gl_FragColor = vec4(B, 1.);
+	fragColor = vec4(B, 1.);
 }
 ]],
 		{
@@ -779,9 +828,21 @@ void main() {
 
 	path'calc_b.postproc.frag':write(calcBFragmentCode)
 
-
-
-
+	
+	self.quadGeom = GLGeometry{
+		mode = gl.GL_TRIANGLE_STRIP,
+		vertexes = {
+			data = {
+				0, 0,
+				1, 0,
+				0, 1,
+				1, 1,
+			},
+			dim = 2,
+		},
+	}
+	
+	self.unitProjMat= matrix_ffi({4,4}, 'float'):zeros():setOrtho(0, 1, 0, 1, 0, 1)
 
 	do
 		print'generating B field...'
@@ -796,8 +857,13 @@ void main() {
 glreport'here'
 
 		local calcBShader = GLProgram{
+			version = 'latest',
+			header = 'precision highp float;',
 			vertexCode = vertexCode,
 			fragmentCode = calcBFragmentCode,
+			uniforms = {
+				mvProjMat = self.unitProjMat.ptr,
+			},
 		}
 glreport'here'
 		calcBShader:useNone()
@@ -817,31 +883,57 @@ glreport'here'
 			},
 		}
 glreport'here'
-
+		
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
-			resetProjection = true,
+			resetProjection = true,	-- not gles compat
 			shader = calcBShader,
 			dest = Btex,
+			--[[
+			callback = function()
+				self.quadGeom:draw()
+			end,
+			--]]
 		}
 glreport'here'
 
+		-- can I generate the mipmaps of the fbo dest while the fbo is still attached to it?
 		Btex
 			:bind()
 			:generateMipmap()
 			:unbind()
 glreport'here'
 
+		local Bdata = ffi.new('vec4f_t[?]', londim * latdim)
+		--[[ read with fbo/readpixels
+		fbo:draw{
+			viewport = {0, 0, londim, latdim},
+			shader = calcBShader,
+			dest = Btex,
+			callback = function()
+				gl.glReadPixels(0, 0, Btex.width, Btex.height, gl.GL_RGBA, gl.GL_FLOAT, Bdata)
+			end,
+		}
+		--]]
+		-- [[ read with getteximage
+		Btex:bind()
+			:toCPU(Bdata)
+		Btex:unbind()
+		print'Bdata'
+		for i=0,londim*latdim-1 do
+			--print(Bdata[i])
+		end
+		--]]
+
 -- [=[ hmm, better way than copy paste?
 
 		print'generating div B and curl B...'
 
 		local calcB2Shader = GLProgram{
+			version = 'latest',
+			header = 'precision highp float;',
 			vertexCode = vertexCode,
-			fragmentCode = template(
-[[
-#version 120
-
+			fragmentCode = template([[
 uniform float dt;
 
 ]]..calc_b_shader..[[
@@ -855,7 +947,8 @@ vec3 dphi = vec3(M_PI / londim, 0., 0.);
 vec3 dlambda = vec3(0., 2. * M_PI / latdim, 0.);
 vec3 dheight = vec3(0., 0., 1.);
 
-varying vec2 texcoordv;
+in vec2 texcoordv;
+out vec4 fragColor;
 
 void main() {
 	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
@@ -876,7 +969,7 @@ void main() {
 		dphi_B.y - dlambda_B.x
 	);
 
-	gl_FragColor = vec4(
+	fragColor = vec4(
 		div_B,
 		div2D_B,
 		curl_B.z,
@@ -892,7 +985,10 @@ void main() {
 					wmm = wmm,
 					dt = 0,
 				}
-			)
+			),
+			uniforms = {
+				mvProjMat = self.unitProjMat.ptr,
+			},
 		}
 glreport'here'
 		calcB2Shader:useNone()
@@ -912,32 +1008,41 @@ glreport'here'
 			},
 		}
 glreport'here'
+		
+		-- only used for stat calc
+		local B2data = ffi.new('vec4f_t[?]', londim * latdim)
 
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
-			resetProjection = true,
-			shader = calcB2Shader,
+			resetProjection = true,	-- not gles compat
 			dest = B2tex,
+			--[=[
+			callback = function()
+				calcB2Shader:use()
+				self.quadGeom:draw()
+				calcB2Shader:useNone()
+				--[[ read with readpixels
+				gl.glReadPixels(0, 0, B2tex.width, B2tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2data)
+				--]]
+			end,
+			--]=]
 		}
 glreport'here'
-
-
-		-- only used for stat calc
-		local Bdata = ffi.new('vec3f_t[?]', londim * latdim)
-		Btex:toCPU(Bdata)
+		-- [[ read with getteximage
+		B2tex:bind()
 glreport'here'
-
+		B2tex:toCPU(B2data)
+glreport'here'
+		B2tex:unbind()
+glreport'here'
+		print'B2data'
+		for i=0,londim*latdim-1 do
+			--print(B2data[i])
+		end
+		--]]
 glreport'here'
 
 		--B2tex:generateMipmap()
-
-		local B2data = ffi.new('vec4f_t[?]', londim * latdim)
-		B2tex:bind()
-		B2tex:toCPU(B2data)
-glreport'here'
-
-		B2tex:unbind()
-glreport'here'
 
 		local statgens = table{
 			function(B, B2) return B:length() end,
@@ -1019,12 +1124,10 @@ glreport'here'
 
 	for _,overlay in ipairs(overlays) do
 		overlay.shader = GLProgram{
+			version = 'latest',
+			header = 'precision highp float;',
 			vertexCode = vertexCode,
-			fragmentCode =
-[[
-#version 120
-//120 needed for mat2x3 type
-
+			fragmentCode = [[
 uniform float dt;
 
 ]]
@@ -1063,21 +1166,22 @@ template(
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
-varying vec2 texcoordv;
+in vec2 texcoordv;
+out vec4 fragColor;
 
-uniform sampler2D earthtex;
+uniform sampler2D earthTex;
 uniform sampler2D Btex;
 uniform sampler2D B2tex;
-uniform sampler1D hsvtex;
+uniform sampler2D gradTex;
 uniform float alpha;
 
 void main() {
 	float s = .5;
 	float hsvBlend = .5;
 
-	vec4 B2 = texture2D(B2tex, texcoordv);
+	vec4 B2 = texture(B2tex, texcoordv);
 #ifndef CALC_B_ON_GPU
-	vec4 B = texture2D(Btex, texcoordv);
+	vec4 B = texture(Btex, texcoordv);
 #else
 	vec3 plh = vec3(
 		(texcoordv.y - .5) * M_PI,			//phi
@@ -1089,11 +1193,11 @@ void main() {
 
 	<?=overlay.code?>
 
-	gl_FragColor = mix(
-		texture2D(earthtex, vec2(texcoordv.x, 1. - texcoordv.y)),
-		texture1D(hsvtex, s),
+	fragColor = mix(
+		texture(earthTex, vec2(texcoordv.x, 1. - texcoordv.y)),
+		texture(gradTex, vec2(s, .5)),
 		hsvBlend);
-	gl_FragColor.a = alpha;
+	fragColor.a = alpha;
 }
 ]], 		{
 				overlay = overlay,
@@ -1101,8 +1205,8 @@ void main() {
 				clnumber = clnumber,
 			}),
 			uniforms = {
-				earthtex = 0,
-				hsvtex = 1,
+				earthTex = 0,
+				gradTex = 1,
 				Btex = 2,
 				B2tex = 3,
 				alpha = 1,
@@ -1118,6 +1222,71 @@ void main() {
 		self.view.orthoSize = 2
 	end
 	gl.glClearColor(0,0,0,0)
+
+
+	self.pointSceneObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			header = 'precision highp float;',
+			vertexCode = [[
+in vec3 vertex;
+uniform mat4 mvProjMat;
+uniform float pointSize;
+void main() {
+	gl_Position = mvProjMat * vec4(vertex, 1.);
+	gl_PointSize = pointSize;
+}
+]],
+			fragmentCode = [[
+uniform vec3 color;
+out vec4 fragColor;
+void main() {
+	fragColor = vec4(color, 1.);
+}
+]],
+		},
+		vertexes = {
+			dim = 3,
+			count = 1,
+			size = 3 * ffi.sizeof'float',
+			type = gl.GL_FLOAT,
+			data = ffi.new('vec3f_t[?]', 1),
+		},
+		geometry = {
+			mode = gl.GL_POINTS,
+		},
+	}
+
+	self.lineSceneObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			header = 'precision highp float;',
+			vertexCode = [[
+in vec3 vertex;
+uniform mat4 mvProjMat;
+void main() {
+	gl_Position = mvProjMat * vec4(vertex, 1.);
+}
+]],
+			fragmentCode = [[
+uniform vec3 color;
+out vec4 fragColor;
+void main() {
+	fragColor = vec4(color, 1.);
+}
+]],
+		},
+		vertexes = {
+			dim = 3,
+			count = 2,
+			size = 2 * 3 * ffi.sizeof'float',
+			type = gl.GL_FLOAT,
+			data = ffi.new('vec3f_t[?]', 2),	
+		},
+		geometry = {
+			mode = gl.GL_LINES,
+		},
+	}
 
 	gl.glEnable(gl.GL_CULL_FACE)
 	gl.glEnable(gl.GL_DEPTH_TEST)
@@ -1145,28 +1314,45 @@ local function drawReading(info)
 	local ex, ey, ez = geom:basis(phi, lambda, height)
 	local H = (ex * math.cos(headingRad) + ey * math.sin(headingRad)) * .2
 
-	gl.glColor3f(1,1,0)
-
 	-- TODO geom should be transforms, and apply to all geom rendered
-	gl.glPointSize(5)
-	gl.glBegin(gl.GL_POINTS)
+	self.pointSceneObj.uniforms.color = {1,1,0}
+	self.pointSceneObj.uniforms.pointSize = 5
+	self.pointSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+	self.pointSceneObj.vertexes.buffer.data[0]:set(x,y,z)
+	self.pointSceneObj.vertexes.buffer
+		:bind()
+		:updateData()
+		:unbind()
+	self.pointSceneObj:draw()
 
-	gl.glVertex3f(x, y, z)
+	self.lineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+	
+	self.lineSceneObj.uniforms.color = {0,0,1}
+	self.lineSceneObj.vertexes.buffer.data[0]:set(x,y,z)
+	self.lineSceneObj.vertexes.buffer.data[1]:set(x + ex.x * .2, y + ex.y * .2, z + ex.z * .2)
+	self.lineSceneObj.vertexes.buffer
+		:bind()
+		:updateData()
+		:unbind()
+	self.lineSceneObj:draw()
 
-	gl.glEnd()
-	gl.glPointSize(1)
+	self.lineSceneObj.uniforms.color = {0,1,0}
+	self.lineSceneObj.vertexes.buffer.data[0]:set(x,y,z)
+	self.lineSceneObj.vertexes.buffer.data[1]:set(x + ey.x * .2, y + ey.y * .2, z + ey.z * .2)
+	self.lineSceneObj.vertexes.buffer
+		:bind()
+		:updateData()
+		:unbind()
+	self.lineSceneObj:draw()
 
-	gl.glBegin(gl.GL_LINES)
-	gl.glColor3f(0,0,1)
-	gl.glVertex3f(x, y, z)
-	gl.glVertex3f(x + ex.x * .2, y + ex.y * .2, z + ex.z * .2)
-	gl.glColor3f(0,1,0)
-	gl.glVertex3f(x, y, z)
-	gl.glVertex3f(x + ey.x * .2, y + ey.y * .2, z + ey.z * .2)
-	gl.glColor3f(1,0,1)
-	gl.glVertex3f(x, y, z)
-	gl.glVertex3f(x + H.x, y + H.y, z + H.z)
-	gl.glEnd()
+	self.lineSceneObj.uniforms.color = {0,0,1}
+	self.lineSceneObj.vertexes.buffer.data[0]:set(x,y,z)
+	self.lineSceneObj.vertexes.buffer.data[1]:set(x + H.x, y + H.y, z + H.z)
+	self.lineSceneObj.vertexes.buffer
+		:bind()
+		:updateData()
+		:unbind()
+	self.lineSceneObj:draw()
 
 	-- now use wgs84 here regardless of 'geom'
 	--local pos = vec3f(latLonToCartesianWGS84(phi, lambda, height))
@@ -1206,7 +1392,7 @@ local function drawReading(info)
 	gl.glEnd()
 end
 
-local function drawVectorField(geom)
+local function drawVectorField(geom, app)
 
 	local arrow = {
 		{-.5, 0.},
@@ -1223,6 +1409,12 @@ local function drawVectorField(geom)
 	local scale = guivars.arrowScale  / (BStat.mag.max * ires)
 --	geom.list = geom.list or {}
 --	glCallOrRun(geom.list, function()
+	
+	gl.glMatrixMode(gl.GL_PROJECTION)
+	gl.glLoadMatrixf(app.view.projMat.ptr)
+	gl.glMatrixMode(gl.GL_MODELVIEW)
+	gl.glLoadMatrixf(app.view.mvMat.ptr)
+
 	gl.glBegin(gl.GL_LINES)
 	for i=0,ires do
 		local u = i/ires
@@ -1306,7 +1498,7 @@ function App:update(...)
 --]]
 
 	if guivars.doDrawVectorField then
-		drawVectorField(geom)
+		drawVectorField(geom, self)
 	end
 
 	shader:use()
@@ -1314,9 +1506,9 @@ function App:update(...)
 	gl.glUniform1f(shader.uniforms.alpha.loc, guivars.drawAlpha)
 
 	gl.glCullFace(gl.GL_FRONT)
-	geom:draw()
+	geom:draw(self)
 	gl.glCullFace(gl.GL_BACK)
-	geom:draw()
+	geom:draw(self)
 
 	B2tex:unbind(3)
 	Btex:unbind(2)
