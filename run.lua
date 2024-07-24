@@ -340,6 +340,7 @@ local BStat = StatSet(
 	'mag', 'x', 'y', 'z', 'mag2d',
 	'div', 'div2d', 'curlZ', 'curlMag'
 )
+for i,stat in ipairs(BStat) do stat.onlyFinite = true end
 
 local londim -- dimension in 2D x dir / spherical phi / globe lambda dir
 local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
@@ -858,7 +859,7 @@ glreport'here'
 
 		local calcBShader = GLProgram{
 			version = 'latest',
-			header = 'precision highp float;',
+			precision = 'best',
 			vertexCode = vertexCode,
 			fragmentCode = calcBFragmentCode,
 			uniforms = {
@@ -875,19 +876,20 @@ glreport'here'
 			height = latdim,
 			format = gl.GL_RGB,
 			type = gl.GL_FLOAT,
-			minFilter = gl.GL_LINEAR,
+			minFilter = gl.GL_NEAREST,--gl.GL_LINEAR,
 			magFilter = gl.GL_NEAREST,
 			wrap = {
 				s = gl.GL_REPEAT,
 				t = gl.GL_REPEAT,
 			},
-		}
+		}:unbind()
 glreport'here'
 
+		local Bdata = ffi.new('vec4f_t[?]', londim * latdim)
+		calcBShader:use()
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			resetProjection = true,	-- not gles compat
-			shader = calcBShader,
 			dest = BTex,
 			--[[
 			callback = function()
@@ -895,35 +897,33 @@ glreport'here'
 			end,
 			--]]
 		}
+		calcBShader:useNone()
 glreport'here'
 
-		-- can I generate the mipmaps of the fbo dest while the fbo is still attached to it?
-		BTex
-			:bind()
-			:generateMipmap()
-			:unbind()
-glreport'here'
-
-		local Bdata = ffi.new('vec4f_t[?]', londim * latdim)
 		--[[ read with fbo/readpixels
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
-			shader = calcBShader,
 			dest = BTex,
 			callback = function()
 				gl.glReadPixels(0, 0, BTex.width, BTex.height, gl.GL_RGBA, gl.GL_FLOAT, Bdata)
 			end,
 		}
+		BTex:unbind()
 		--]]
 		-- [[ read with getteximage
 		BTex:bind()
-			:toCPU(Bdata)
+		BTex:toCPU(Bdata)
 		BTex:unbind()
-		print'Bdata'
 		for i=0,londim*latdim-1 do
-			--print(Bdata[i])
+--			print('b', i, Bdata[i])
 		end
 		--]]
+
+		BTex:bind()
+--			:generateMipmap()
+			:unbind()
+glreport'here'
+
 
 -- [=[ hmm, better way than copy paste?
 
@@ -931,7 +931,7 @@ glreport'here'
 
 		local calcB2Shader = GLProgram{
 			version = 'latest',
-			header = 'precision highp float;',
+			precision = 'best',
 			vertexCode = vertexCode,
 			fragmentCode = template([[
 uniform float dt;
@@ -989,9 +989,7 @@ void main() {
 			uniforms = {
 				mvProjMat = self.unitProjMat.ptr,
 			},
-		}
-glreport'here'
-		calcB2Shader:useNone()
+		}:useNone()
 glreport'here'
 
 		B2Tex = GLTex2D{
@@ -1000,22 +998,24 @@ glreport'here'
 			height = latdim,
 			format = gl.GL_RGBA,
 			type = gl.GL_FLOAT,
-			minFilter = gl.GL_LINEAR,
+			minFilter = gl.GL_NEAREST,--gl.GL_LINEAR,
 			magFilter = gl.GL_NEAREST,
 			wrap = {
 				s = gl.GL_REPEAT,
 				t = gl.GL_REPEAT,
 			},
-		}
+		}:unbind()
 glreport'here'
 
 		-- only used for stat calc
 		local B2data = ffi.new('vec4f_t[?]', londim * latdim)
 
+		--calcB2Shader:use()	-- TODO not working ...
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			resetProjection = true,	-- not gles compat
 			dest = B2Tex,
+			--shader = calcB2Shader,
 			--[=[
 			callback = function()
 				calcB2Shader:use()
@@ -1027,17 +1027,14 @@ glreport'here'
 			end,
 			--]=]
 		}
+		calcB2Shader:useNone()
 glreport'here'
 		-- [[ read with getteximage
 		B2Tex:bind()
-glreport'here'
 		B2Tex:toCPU(B2data)
-glreport'here'
 		B2Tex:unbind()
-glreport'here'
-		print'B2data'
 		for i=0,londim*latdim-1 do
-			--print(B2data[i])
+--			print('b2', i, B2data[i])
 		end
 		--]]
 glreport'here'
@@ -1125,7 +1122,7 @@ glreport'here'
 	for _,overlay in ipairs(overlays) do
 		overlay.shader = GLProgram{
 			version = 'latest',
-			header = 'precision highp float;',
+			precision = 'best',
 			vertexCode = vertexCode,
 			fragmentCode = [[
 uniform float dt;
@@ -1227,7 +1224,7 @@ void main() {
 	self.pointSceneObj = GLSceneObject{
 		program = {
 			version = 'latest',
-			header = 'precision highp float;',
+			precision = 'best',
 			vertexCode = [[
 in vec3 vertex;
 uniform mat4 mvProjMat;
@@ -1260,7 +1257,7 @@ void main() {
 	self.lineSceneObj = GLSceneObject{
 		program = {
 			version = 'latest',
-			header = 'precision highp float;',
+			precision = 'best',
 			vertexCode = [[
 in vec3 vertex;
 uniform mat4 mvProjMat;
@@ -1290,7 +1287,7 @@ void main() {
 
 	self.vectorFieldShader = GLProgram{
 		version = 'latest',
-		header = 'precision highp float;',
+		precision = 'best',
 		vertexCode = [[
 layout(location=0) in vec2 vertex;
 in vec3 pos;
@@ -1307,6 +1304,30 @@ in vec2 coords;
 uniform sampler2D BTex;
 #endif
 
+float lenSq(vec3 v) {
+	return dot(v, v);
+}
+
+vec3 perpTo(vec3 v) {
+	vec3 vx = vec3(0., -v.z, v.y);
+	vec3 vy = vec3(v.z, 0., -v.x);
+	vec3 vz = vec3(-v.y, v.x, 0.);
+	vec3 lenSqs = vec3(lenSq(vx), lenSq(vy), lenSq(vz));
+	if (lenSqs.x > lenSqs.y) {		// x > y
+		if (lenSqs.x > lenSqs.z) {	// x > y, x > z
+			return vx;
+		} else {					// z > x > y
+			return vz;
+		}
+	} else {						// y > x
+		if (lenSqs.y > lenSqs.z) {	// y > x, y > z
+			return vy;
+		} else {					// z > y > x
+			return vz;
+		}
+	}
+}
+
 void main() {
 #if 0	// B coeffs using textures
 	vec3 BCoeffs = texture(BTex, coords).xyz;
@@ -1316,8 +1337,10 @@ void main() {
 		+ ey * BCoeffs.y
 		+ ez * (BCoeffs.z * fieldZScale)
 	);
+	//vec3 Bp = perpTo(B);			// cross with furthest axis
+	vec3 Bp = vec3(-B.y, B.x, 0.);	// cross with z axis
 	gl_Position = mvProjMat * vec4(
-		pos + vertex.x * B + vertex.y * vec3(-B.y, B.x, 0.),
+		pos + vertex.x * B + vertex.y * Bp,
 		1.);
 }
 ]],
