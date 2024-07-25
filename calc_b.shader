@@ -21,8 +21,10 @@ plh.xyz = phi, lambda, height
 
 phi in [-pi/2, pi/2]
 lambda in [-pi, pi]
+height is in m
 */
 vec3 calcB(vec3 plh) {
+	plh.z *= 1e-3;	// m to km
 		
 	// begin MAG_GeodeticToSpherical
 	vec2 cisPhi = vec2(cos(plh.x), sin(plh.x));

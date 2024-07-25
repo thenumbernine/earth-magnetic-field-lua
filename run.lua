@@ -71,7 +71,11 @@ end
 
 local nMax = #wmm
 
+-- phi = radians
+-- lambda = radians
+-- height = meters
 local function calcB(phi, lambda, height)
+	height = height * 1e-3	-- m to km
 
 	-- begin MAG_GeodeticToSpherical
 	local cosPhi = math.cos(phi)
@@ -364,6 +368,7 @@ local guivars = {
 
 	drawAlpha = 1,
 	doDrawVectorField = true,
+	doDrawFieldLines = true,
 
 	fieldDT = 0,
 
@@ -431,8 +436,7 @@ for _,c in ipairs(charts) do
 
 	local oldBasisFunc = c.basis
 	function c:basis(phi, lambda, height)
-		local ex, ey, ez = oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
-		return ex, ey, ez
+		return oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
 	end
 end
 
@@ -802,7 +806,7 @@ uniform float dt;
 
 vec3 dphi = vec3(M_PI / londim, 0., 0.);
 vec3 dlambda = vec3(0., 2. * M_PI / latdim, 0.);
-vec3 dheight = vec3(0., 0., 1.);
+vec3 dheight = vec3(0., 0., 1000.);
 
 in vec2 texcoordv;
 out vec4 fragColor;
@@ -813,8 +817,9 @@ void main() {
 
 	vec3 plh = vec3(phi, lambda, 0.);
 
-	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / dphi.x / (wgs84_a * cos(plh.x));
-	vec3 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / dlambda.y / wgs84_a;
+	// TODO units anyone?
+	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / dphi.x / (wgs84_a * 1e+3 * cos(plh.x));
+	vec3 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / dlambda.y / (wgs84_a * 1e+3);
 	vec3 dheight_B = (calcB(plh + dheight) - calcB(plh - dheight)) / dheight.z;
 
 	float div2D_B = dphi_B.x + dlambda_B.y;
@@ -1314,6 +1319,24 @@ void main() {
 		},
 	}:useNone()
 
+	self.fieldLineShader = GLProgram{
+		version = 'latest',
+		precision = 'best',
+		vertexCode = [[
+layout(location=0) in vec3 vertex;
+uniform mat4 mvProjMat;
+void main() {
+	gl_Position = mvProjMat * vec4(vertex, 1.);
+}
+]],
+		fragmentCode = [[
+out vec4 fragColor;
+void main() {
+	fragColor = vec4(1., 1., 1., 1.);
+}
+]],
+	}:useNone()
+
 	gl.glEnable(gl.GL_CULL_FACE)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 	gl.glEnable(gl.GL_BLEND)
@@ -1382,8 +1405,8 @@ local function drawReading(info)
 
 	-- now use wgs84 here regardless of 'chart'
 	--local pos = vec3f(latLonToCartesianWGS84(phi, lambda, height))
-	local pos = vec3f(charts.WGS84:chart(math.rad(phi), math.rad(lambda), height)) / allCharts.WGS84_a
-	local ex, ey, ez = charts.WGS84:basis(math.rad(phi), math.rad(lambda), .1)
+	local pos = vec3f(charts.WGS84:chart(math.deg(phi), math.deg(lambda), height)) / allCharts.WGS84_a
+	local ex, ey, ez = charts.WGS84:basis(math.deg(phi), math.deg(lambda), .1)
 	local H = (ex * math.cos(headingRad) + ey * math.sin(headingRad)) * .2
 
 	local axis = pos:cross(H):normalize()
@@ -1418,7 +1441,7 @@ local function drawReading(info)
 	gl.glEnd()
 end
 
-local function drawVectorField(chart, app)
+local function drawVectorField(app, chart)
 
 	local arrow = {
 		-- [[ arrow for real
@@ -1476,12 +1499,7 @@ local function drawVectorField(chart, app)
 		local lat = (v * 2 - 1) * 90
 		local phi = math.rad(lat)
 
-		--[[ equal res at all latitudes
-		local thislondim = londim
-		--]]
-		-- [[ proportional to the latitude arclen
 		local thislondim = math.max(1, math.ceil(londim * math.cos(phi)))
-		--]]
 		for i=0,thislondim-1 do
 			local u = (i + .5) / thislondim
 			local lon = (u * 2 - 1) * 180
@@ -1489,7 +1507,7 @@ local function drawVectorField(chart, app)
 
 			gl.glVertexAttrib2f(shader.attrs.texcoord.loc, u, v)
 
-			-- [[
+			-- [[ TODO move this to GPU so I can use instanced geom draws
 			local ex, ey, ez = chart:basis(phi, lambda, height)
 			gl.glVertexAttrib3f(shader.attrs.ex.loc, ex:unpack())
 			gl.glVertexAttrib3f(shader.attrs.ey.loc, ey:unpack())
@@ -1505,6 +1523,82 @@ local function drawVectorField(chart, app)
 	gl.glEnd()
 
 	GLTex2D:unbind()
+	shader:useNone()
+end
+
+local linesList
+local linesChart
+local glCallOrRun = require 'gl.call'
+function drawFieldLines(app, chart)
+	local londim = 30
+	local latdim = 15
+	local height0 = 0
+
+	local shader = app.fieldLineShader
+	shader:use()
+	shader:setUniform('mvProjMat', app.view.mvProjMat.ptr)
+
+	local dparam = 1e-2
+
+	if chart ~= linesChart then linesChart = chart linesList = nil end
+	linesList = linesList or {}
+	glCallOrRun(linesList, function()
+		print'building'
+		-- try to draw magnetic field lines ...
+		for j=0,latdim-1 do
+			local v = (j + .5) / latdim
+			local lat = (v * 2 - 1) * 90
+			local phi0 = math.rad(lat)
+
+			local thislondim = math.max(1, math.ceil(londim * math.cos(phi0)))
+			for i=0,thislondim-1 do
+				local u = (i + .5) / thislondim
+				local lon = (u * 2 - 1) * 180
+				local lambda0 = math.rad(lon)
+
+				for sign=-1,1,2 do
+
+					local phi = phi0
+					local lambda = lambda0
+					local height = height0
+
+					gl.glBegin(gl.GL_LINE_STRIP)
+
+					-- this is in earth rad units ...
+					local x, y, z = chart:chart(phi, lambda, height)
+					gl.glColor3f(1,1,1)
+					gl.glVertex3f(x, y, z)
+
+					for k=1,200 do
+						-- B field in north, east, downward components ...
+						local Bx, By, Bz = calcB(phi, lambda, height)
+
+						local Bmag = math.sqrt(Bx*Bx + By*By + Bz*Bz)
+						local invBmag = 1 / Bmag
+
+						local r = math.sqrt(x*x + y*y + z*z)		-- radial distance, proportional to wgs84.a
+						local dphi = sign * dparam * Bx * invBmag * r
+						local dlambda = sign * dparam * By * invBmag * r
+						local dheight = -sign * dparam * Bz * invBmag * wgs84.a * 1000	-- height is in meters
+						phi = phi + dphi
+						lambda = lambda + dlambda
+						height = height + dheight
+
+						x, y, z = chart:chart(phi, lambda, height)
+						if bit.band(k, 1) == 0 then
+							gl.glColor3f(1,0,0)
+						else
+							gl.glColor3f(0,0,1)
+						end
+						gl.glVertex3f(x, y, z)
+					end
+
+					gl.glEnd()
+				end
+			end
+		end
+	end)
+
 	shader:useNone()
 end
 
@@ -1550,7 +1644,10 @@ function App:update(...)
 --]]
 
 	if guivars.doDrawVectorField then
-		drawVectorField(chart, self)
+		drawVectorField(self, chart)
+	end
+	if guivars.doDrawFieldLines then
+		drawFieldLines(self, chart)
 	end
 
 	shader:use()
@@ -1592,6 +1689,7 @@ function App:updateGUI()
 
 	ig.luatableCheckbox('ortho', self.view, 'ortho')
 	ig.luatableCheckbox('draw vector field', guivars, 'doDrawVectorField')
+	ig.luatableCheckbox('draw field lines', guivars, 'doDrawFieldLines')
 
 	ig.igText'chart'
 	for i,chart in ipairs(charts) do
