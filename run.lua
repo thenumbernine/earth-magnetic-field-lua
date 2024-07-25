@@ -817,9 +817,10 @@ function App:initGL(...)
 		grad.tex = grad:gen()
 	end
 
-
-
-	local calc_b_shader = path'calc_b.shader':read()
+	local calc_b_shader = template(assert(path'calc_b.shader':read()), {
+		wgs84 = wgs84,
+		wmm = wmm,
+	})
 
 	self.quadGeom = GLGeometry{
 		mode = gl.GL_TRIANGLE_STRIP,
@@ -863,10 +864,9 @@ void main() {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = quadGeomVertexCode,
-			fragmentCode = template([[
+			fragmentCode = [[
 uniform float dt;
-
-]]..calc_b_shader..[[
+]]..calc_b_shader..template[[
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
@@ -879,12 +879,9 @@ void main() {
 	fragColor = vec4(B, 1.);
 }
 ]],
-				{
-					dt = 0,
-					wgs84 = wgs84,
-					wmm = wmm,
-				}
-			),
+			uniforms = {
+				dt = 0,
+			},
 		}:useNone()
 glreport'here'
 
@@ -935,10 +932,9 @@ glreport'here'
 			version = 'latest',
 			precision = 'best',
 			vertexCode = quadGeomVertexCode,
-			fragmentCode = template([[
+			fragmentCode = [[
 uniform float dt;
-
-]]..calc_b_shader..[[
+]]..calc_b_shader..template([[
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
@@ -983,11 +979,11 @@ void main() {
 					latdim = latdim,
 					londim = londim,
 					clnumber = clnumber,
-					wgs84 = wgs84,
-					wmm = wmm,
-					dt = 0,
 				}
 			),
+			uniforms = {
+				dt = 0,
+			},
 		}:useNone()
 glreport'here'
 
@@ -1151,10 +1147,9 @@ void main() {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = overlayVertexCode,
-			fragmentCode = template([[
+			fragmentCode = [[
 uniform float dt;
-
-]]..calc_b_shader..[[
+]]..calc_b_shader..template([[
 
 // TODO if you use tex then at the very pole there is a numeric artifact ...
 #define CALC_B_ON_GPU
@@ -1215,8 +1210,6 @@ void main() {
 }
 ]],
 				{
-					wgs84 = wgs84,
-					wmm = wmm,
 					overlay = overlay,
 					BStat = BStat,
 					clnumber = clnumber,
@@ -1311,6 +1304,9 @@ void main() {
 		version = 'latest',
 		precision = 'best',
 		vertexCode = chartCode
+..[[
+uniform float dt;
+]]..calc_b_shader
 ..template([[
 
 <? for _,name in ipairs(chartCNames) do
@@ -1321,17 +1317,13 @@ uniform bool chartIs3D;
 
 layout(location=0) in vec2 vertex;
 
+in vec3 texcoord;
 in vec3 ex, ey, ez;
 
 uniform mat4 mvProjMat;
 uniform float arrowScale;
 uniform float fieldZScale;
 
-#if 1	// B coeffs using attributes
-in vec3 BCoeffs;
-#endif
-
-in vec3 coords;		// lat lon height in degrees degrees meters
 #if 0	// B coeffs using textures
 uniform sampler2D BTex;
 #endif
@@ -1361,6 +1353,11 @@ vec3 perpTo(vec3 v) {
 }
 
 void main() {
+	vec3 coords = vec3(	
+		(texcoord.y - .5) * 180.,	// lat in deg
+		(texcoord.x - .5) * 360., 	// lon in deg
+		0.);						// height in m
+
 	// expect vertex xyz to be lat lon height
 	// lat and lon is in degrees
 	// height is in meters
@@ -1378,7 +1375,14 @@ void main() {
 
 #if 0	// B coeffs using textures
 	vec3 BCoeffs = texture(BTex, coords).xyz;
+#else	// on GPU
+	vec3 BCoeffs = calcB(vec3(
+		(texcoord.y - .5) * M_PI,			//phi
+		(texcoord.x - .5) * 2. * M_PI,		//lambda
+		0.
+	));
 #endif
+
 	vec3 B = arrowScale * (
 		  ex * BCoeffs.x
 		+ ey * BCoeffs.y
@@ -1565,11 +1569,7 @@ local function drawVectorField(chart, app)
 			local lon = (v * 2 - 1) * 180
 			local lambda = math.rad(lon)
 
-			gl.glVertexAttrib3f(shader.attrs.coords.loc, lat, lon, 0)
-
-			-- [[ B coeffs using attributes
-			gl.glVertexAttrib3f(shader.attrs.BCoeffs.loc, calcB(phi, lambda, height))	-- B field = north, east, down component
-			--]]
+			gl.glVertexAttrib2f(shader.attrs.texcoord.loc, v, u)
 
 			local ex, ey, ez = chart:basis(phi, lambda, height)
 			gl.glVertexAttrib3f(shader.attrs.ex.loc, ex:unpack())
