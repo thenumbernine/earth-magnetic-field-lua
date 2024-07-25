@@ -1526,24 +1526,18 @@ local function drawVectorField(app, chart)
 	shader:useNone()
 end
 
-local linesList
-local linesChart
-local glCallOrRun = require 'gl.call'
 function drawFieldLines(app, chart)
 	local londim = 30
 	local latdim = 15
 	local height0 = 0
 
-	local shader = app.fieldLineShader
-	shader:use()
-	shader:setUniform('mvProjMat', app.view.mvProjMat.ptr)
-
 	local dparam = 1e-2
 
-	if chart ~= linesChart then linesChart = chart linesList = nil end
-	linesList = linesList or {}
-	glCallOrRun(linesList, function()
-		print'building'
+	if not chart.fieldLineSceneObj then
+		print('building field lines for '..chart.name)
+
+		local vertexes = table()
+		local geometries = table()
 		-- try to draw magnetic field lines ...
 		for j=0,latdim-1 do
 			local v = (j + .5) / latdim
@@ -1562,12 +1556,14 @@ function drawFieldLines(app, chart)
 					local lambda = lambda0
 					local height = height0
 
-					gl.glBegin(gl.GL_LINE_STRIP)
-
+					local indexes = table()
+					
 					-- this is in earth rad units ...
 					local x, y, z = chart:chart(phi, lambda, height)
-					gl.glColor3f(1,1,1)
-					gl.glVertex3f(x, y, z)
+					indexes:insert(#vertexes / 3)
+					vertexes:insert(x)
+					vertexes:insert(y)
+					vertexes:insert(z)
 
 					for k=1,200 do
 						-- B field in north, east, downward components ...
@@ -1585,21 +1581,33 @@ function drawFieldLines(app, chart)
 						height = height + dheight
 
 						x, y, z = chart:chart(phi, lambda, height)
-						if bit.band(k, 1) == 0 then
-							gl.glColor3f(1,0,0)
-						else
-							gl.glColor3f(0,0,1)
-						end
-						gl.glVertex3f(x, y, z)
+						indexes:insert(#vertexes / 3)
+						vertexes:insert(x)
+						vertexes:insert(y)
+						vertexes:insert(z)
 					end
-
-					gl.glEnd()
+				
+					geometries:insert{
+						mode = gl.GL_LINE_STRIP,
+						indexes = {
+							data = indexes,
+						},
+					}
 				end
 			end
 		end
-	end)
+		chart.fieldLineSceneObj = GLSceneObject{
+			program = app.fieldLineShader,
+			vertexes = {
+				data = vertexes,
+				dim = 3,
+			},
+			geometries = geometries,
+		}
+	end
 
-	shader:useNone()
+	chart.fieldLineSceneObj.uniforms.mvProjMat = app.view.mvProjMat.ptr
+	chart.fieldLineSceneObj:draw()
 end
 
 
