@@ -721,7 +721,7 @@ local overlays = {
 }
 
 for _,c in ipairs(charts) do
-	function c:draw(app, shader)
+	function c:draw(app, shader, gradtex)
 		local height = 0
 		local jres = 120
 		local ires = 60
@@ -754,6 +754,7 @@ for _,c in ipairs(charts) do
 					geometry = {
 						mode = gl.GL_TRIANGLE_STRIP,
 					},
+					texs = {earthtex, gradtex, BTex, B2Tex},
 					attrs = {
 						texcoord = {
 							buffer = {
@@ -768,6 +769,7 @@ for _,c in ipairs(charts) do
 		end
 		for _,sceneobj in ipairs(self.sceneobjs) do
 			sceneobj.program = shader
+			sceneobj.texs[2] = gradtex
 			sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
 			sceneobj:draw()
 		end
@@ -1541,9 +1543,9 @@ function App:update(...)
 	gl.glUniform1f(shader.uniforms.alpha.loc, guivars.drawAlpha)
 
 	gl.glCullFace(gl.GL_FRONT)
-	geom:draw(self, shader)
+	geom:draw(self, shader, gradtex)
 	gl.glCullFace(gl.GL_BACK)
-	geom:draw(self, shader)
+	geom:draw(self, shader, gradtex)
 
 	B2Tex:unbind(3)
 	BTex:unbind(2)
