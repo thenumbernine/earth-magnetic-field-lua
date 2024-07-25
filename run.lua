@@ -779,7 +779,7 @@ for chartIndex,c in ipairs(charts) do
 					vertexes = self.vertexBuf,
 				})
 			end
-		
+
 			self.sceneobj = GLSceneObject{
 				program = shader,
 				vertexes = self.vertexBuf,
@@ -787,7 +787,7 @@ for chartIndex,c in ipairs(charts) do
 				texs = {earthtex, gradtex, BTex, B2Tex},
 			}
 		end
-		
+
 		self.sceneobj.program = shader
 		self.sceneobj.texs[2] = gradtex
 		self.sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
@@ -1136,8 +1136,7 @@ void main() {
 	pos /= WGS84_a;
 
 	if (chartIs3D) {
-		pos = vec3(pos.x, pos.z, pos.y);
-		pos = vec3(pos.y, pos.x, pos.z);
+		pos = vec3(pos.z, pos.x, pos.y);
 	}
 
 	gl_Position = mvProjMat * vec4(pos, 1.);
@@ -1154,7 +1153,7 @@ void main() {
 			vertexCode = overlayVertexCode,
 			fragmentCode = template([[
 uniform float dt;
-	
+
 ]]..calc_b_shader..[[
 
 // TODO if you use tex then at the very pole there is a numeric artifact ...
@@ -1318,10 +1317,10 @@ void main() {
 ?>uniform float weight_<?=name?>;
 <? end
 ?>
+uniform bool chartIs3D;
 
 layout(location=0) in vec2 vertex;
 
-in vec3 pos;
 in vec3 ex, ey, ez;
 
 uniform mat4 mvProjMat;
@@ -1331,6 +1330,7 @@ uniform float fieldZScale;
 #if 1	// B coeffs using attributes
 in vec3 BCoeffs;
 #endif
+
 in vec3 coords;		// lat lon height in degrees degrees meters
 #if 0	// B coeffs using textures
 uniform sampler2D BTex;
@@ -1361,7 +1361,6 @@ vec3 perpTo(vec3 v) {
 }
 
 void main() {
-#if 0	
 	// expect vertex xyz to be lat lon height
 	// lat and lon is in degrees
 	// height is in meters
@@ -1372,7 +1371,10 @@ void main() {
 ?>	;
 	//from meters to normalized coordinates
 	pos /= WGS84_a;
-#endif
+
+	if (chartIs3D) {
+		pos = vec3(pos.z, pos.x, pos.y);
+	}
 
 #if 0	// B coeffs using textures
 	vec3 BCoeffs = texture(BTex, coords).xyz;
@@ -1535,17 +1537,18 @@ local function drawVectorField(chart, app)
 		mvProjMat = app.view.mvProjMat.ptr,
 		arrowScale = scale,
 		fieldZScale = guivars.fieldZScale,
-		weight_Equidistant = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0,
+		weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0,
 		weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0,
 		weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0,
 		weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0,
+		chartIs3D = chart.is3D or false,
 	}
 	--[[ B coeffs using textures
 	BTex:bind()
 	--]]
 
 	gl.glBegin(gl.GL_LINES)
-	
+
 	for i=0,ires-1 do
 		local u = (i + .5) / ires
 		local lat = (u * 2 - 1) * 90
@@ -1561,11 +1564,8 @@ local function drawVectorField(chart, app)
 			local v = (j + .5) / thisjres
 			local lon = (v * 2 - 1) * 180
 			local lambda = math.rad(lon)
-			
-			--gl.glVertexAttrib3f(shader.attrs.coords.loc, lat, lon, 0)
 
-			local x,y,z = chart:chart(phi, lambda, 0)
-			gl.glVertexAttrib3f(shader.attrs.pos.loc, x, y, z)
+			gl.glVertexAttrib3f(shader.attrs.coords.loc, lat, lon, 0)
 
 			-- [[ B coeffs using attributes
 			gl.glVertexAttrib3f(shader.attrs.BCoeffs.loc, calcB(phi, lambda, height))	-- B field = north, east, down component
