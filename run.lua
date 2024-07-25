@@ -725,54 +725,71 @@ for _,c in ipairs(charts) do
 		local height = 0
 		local jres = 120
 		local ires = 60
-		if not self.sceneobjs then
-			self.sceneobjs = table()
-			for ibase=0,ires-1 do
-				local vertexes = table()
-				local texcoords = table()
+		if not self.sceneobj then
+			local vertexes = table()
+			local texcoords = table()
+			for i=0,ires do
+				local u = i/ires
+				local phi = math.rad((u * 2 - 1) * 90)
 				for j=0,jres do
 					local v = j/jres
 					local lambda = math.rad((v * 2 - 1) * 180)
+					local x,y,z = self:chart(phi, lambda, height)
+					texcoords:append{v, u}
+					vertexes:append{x, y, z}
+				end
+			end
+			local GLArrayBuffer = require 'gl.arraybuffer'
+			self.vertexBuf = GLArrayBuffer{
+				type = gl.GL_FLOAT,
+				data = vertexes,
+				count = #vertexes / 3,
+				dim = 3,
+			}:unbind()
+			self.texcoordBuf = GLArrayBuffer{
+				type = gl.GL_FLOAT,
+				data = texcoords,
+				count = #texcoords / 2,
+				dim = 2,
+			}:unbind()
+			
+			local geometries = table()
+			for ibase=0,ires-1 do
+				local indexes = table()
+				for j=0,jres do
 					for iofs=1,0,-1 do
 						local i = ibase + iofs
-						local u = i/ires
-						local phi = math.rad((u * 2 - 1) * 90)
-
-						local x,y,z = self:chart(phi, lambda, height)
-						texcoords:append{v, u}
-						vertexes:append{x, y, z}
+						indexes:insert(j + (jres + 1) * i)
 					end
 				end
-				self.sceneobjs:insert(GLSceneObject{
-					-- TODO make sure all shaders have same attributes at same locations for this to be able to interchange its shaders
-					program = shader,
-					vertexes = {
-						data = vertexes,
-						count = #vertexes / 3,
-						dim = 3,
+				geometries:insert(GLGeometry{
+					mode = gl.GL_TRIANGLE_STRIP,
+					indexes = {
+						type = gl.GL_UNSIGNED_INT,
+						data = indexes,
+						count = #indexes,
+						dim = 1,
 					},
-					geometry = {
-						mode = gl.GL_TRIANGLE_STRIP,
-					},
-					texs = {earthtex, gradtex, BTex, B2Tex},
-					attrs = {
-						texcoord = {
-							buffer = {
-								data = texcoords,
-								count = #texcoords / 2,
-								dim = 2,
-							},
-						},
-					},
+					vertexes = self.vertexBuf,
 				})
 			end
+		
+			self.sceneobj = GLSceneObject{
+				program = shader,
+				vertexes = self.vertexBuf,
+				geometries = geometries,
+				texs = {earthtex, gradtex, BTex, B2Tex},
+				attrs = {
+					texcoord = {
+						buffer = self.texcoordBuf,
+					},
+				},
+			}
 		end
-		for _,sceneobj in ipairs(self.sceneobjs) do
-			sceneobj.program = shader
-			sceneobj.texs[2] = gradtex
-			sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
-			sceneobj:draw()
-		end
+		self.sceneobj.program = shader
+		self.sceneobj.texs[2] = gradtex
+		self.sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
+		self.sceneobj:draw()
 	end
 end
 
@@ -1101,7 +1118,8 @@ uniform float dt;
 	
 ]]..calc_b_shader..[[
 
-//#define CALC_B_ON_GPU
+// TODO if you use tex then at the very pole there is a numeric artifact ...
+#define CALC_B_ON_GPU
 
 #define BMagMin <?=clnumber(BStat.mag.min)?>
 #define BMagMax <?=clnumber(BStat.mag.max)?>
