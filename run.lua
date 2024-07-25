@@ -373,6 +373,8 @@ local guivars = {
 	fieldZScale = 1,
 
 	arrowScale = 5,
+
+	gradScale = 1,
 }
 
 
@@ -452,186 +454,17 @@ for _,c in ipairs(charts) do
 	end
 end
 
---[=[
-local charts = {
-	Geom{
-		name = 'Equirectangular',
-		chartObj = charts.Equirectangular,
-		R = 2/math.pi,
-		lambda0 = 0,
-		phi0 = 0,
-		phi1 = 0,
-		updateGUI = function(self)
-			ig.luatableInputFloat('R', self, 'R')
-			ig.luatableInputFloat('lambda0', self, 'lambda0')
-			ig.luatableInputFloat('phi0', self, 'phi0')
-			ig.luatableInputFloat('phi1', self, 'phi1')
-		end,
-		chart = function(self, phi, lambda, height)
---[[
-			return self.R * (lambda - self.lambda0) * math.cos(self.phi1),
-				self.R * (phi - self.phi0),
-				height / wgs84.a
---]]
--- [[
-			local x, y, z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
-			x = x / allCharts.WGS84_a
-			y = y / allCharts.WGS84_a
-			z = z / allCharts.WGS84_a
-			return x,y,z
---]]
-		end,
-		basis = function(self, phi, lambda, height)
-			-- Bx is north, By is east, Bz is down ... smh
---[[
-			return
-				vec3f(0, 1, 0),
-				vec3f(1, 0, 0),
-				vec3f(0, 0, -1)
---]]
--- [[
-			local ex, ey, ez = self.chartObj:basis(math.deg(phi), math.deg(lambda), height)
-			-- in geographic-chrats.lua Chart.basis: "don't forget that GLSL is swapping the z-back for z-up" ... I forgot why I wrote that
-			-- TODO Equirectangular has a basis here of {0,1,0},{1,0,0},{0,0,-1}
-			-- but in geographic-charts it is {0,1,0},{1,0,0},{0,0,1}
-			-- but Mollweide has in both here and geographic-charts {0,1,0},{1,0,0},{0,0,-1}
-			return ex, ey, -ez
---]]
-		end,
-		draw = function()
-			gl.glBegin(gl.GL_QUADS)
-			gl.glTexCoord2f(0, 0)	gl.glVertex2f(-2, -1)
-			gl.glTexCoord2f(1, 0)	gl.glVertex2f(2, -1)
-			gl.glTexCoord2f(1, 1)	gl.glVertex2f(2, 1)
-			gl.glTexCoord2f(0, 1)	gl.glVertex2f(-2, 1)
-			gl.glEnd()
-		end,
-	},
-	Geom{
-		name = 'Azimuthal equidistant',
-		chartObj = charts['Azimuthal equidistant'],
-		chart = function(self, phi, lambda, height)
---[[
-			local theta = .5 * math.pi - phi
-			local x,y,z =
-				math.cos(lambda) * theta,
-				math.sin(lambda) * theta,
-				height / wgs84.a
-			--print(x,y,z)
-			return x,y,z
---]]
--- [[
-			local x, y, z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
-			-- TODO is this the correct adjustment for height?
-			x = x / allCharts.WGS84_a
-			y = y / allCharts.WGS84_a
-			z = z / allCharts.WGS84_a
-			--print(x,y,z)
-			return x,y,z
---]]
-		end,
-		-- phi = latitude radians = angle up from equator
-		-- lambda = longitude in radians = angle east of prime meridian
-		basis = function(self, phi, lambda, height)
---[[
-			local cosLambda = math.cos(lambda)
-			local sinLambda = math.sin(lambda)
-			local ex, ey, ez =
-				vec3f(-cosLambda, -sinLambda, 0),	-- d/dphi
-				vec3f(-sinLambda, cosLambda, 0),	-- d/dlambda
-				vec3f(0, 0, -1)						-- d/dheight
-			print(ex, ey, ez)
-			return ex, ey, ez
---]]
--- [[
-			local ex, ey, ez = self.chartObj:basis(math.deg(phi), math.deg(lambda), height)
-			-- TODO why this transform?
-			-- and why not this transform for Equirectangular?
-			ex:set(-ex.y, ex.x, -ex.z)
-			ey:set(-ey.y, ey.x, -ey.z)
-			ez:set(-ez.y, ez.x, -ez.z)
-			return ex, ey, ez
---]]
-		end,
-	},
-	Geom{
-		name = 'Mollweide',
-		chartObj = charts.Mollweide,
-		R = math.pi / 4,
-		lambda0 = 0,	-- in degrees
-		updateGUI = function(self)
-			ig.luatableInputFloat('R', self, 'R')
-			ig.luatableInputFloat('lambda0', self, 'lambda0')
-		end,
-		chart = function(self, phi, lambda, height)
---[[
-			local theta = phi
-			for i=1,10 do
-				local dtheta = (2 * theta + math.sin(2 * theta) - math.pi * math.sin(phi)) / (2 + 2 * math.cos(theta))
-				if math.abs(dtheta) < 1e-5 then break end
-				theta = theta - dtheta
-			end
-
-			lambda = lambda - math.rad(self.lambda0)
-
-			local x = self.R * math.sqrt(8) / math.pi * lambda * math.cos(theta)
-			local y = self.R * math.sqrt(2) * math.sin(theta)
-			return x, y, height / wgs84.a
---]]
--- [[
-			local x,y,z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
-			x = x / allCharts.WGS84_a
-			y = y / allCharts.WGS84_a
-			z = z / allCharts.WGS84_a
-			return x, y, z
---]]
-		end,
-		basis = function(self, phi, lambda, height)
---[[
-			return
-				vec3f(0, 1, 0),
-				vec3f(1, 0, 0),
-				vec3f(0, 0, -1)
---]]
--- [[
-			return self.chartObj:basis(math.deg(phi), math.deg(lambda), height)
---]]
-		end,
-	},
-	Geom{
-		name = 'WGS84',
-		chartObj = charts['WGS84'],
-		chart = function(self, phi, lambda, height)
---[[
-			return latLonToCartesianWGS84(phi, lambda, height)
---]]
--- [[
-			local x,y,z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
-			x = x / allCharts.WGS84_a
-			y = y / allCharts.WGS84_a
-			z = z / allCharts.WGS84_a
-			return x, y, z
---]]
-		end,
-		basis = function(self, phi, lambda, height)
---[[
-			local ex, ey, ez = latLonToCartesianTangentSpaceWGS84(phi, lambda, height)
-			return ex, ey, ez
---]]
--- [[
-			local ex,ey,ez = self.chartObj:basis(math.deg(phi), math.deg(lambda), height)
-			return ex,ey,ez
---]]
-		end,
-	},
-}
---]=]
-
 local gradients = {
 	{
 		name = 'rainbow',
 		gen = function()
-			return require 'gl.hsvtex2d'(256):unbind()
+			local tex = require 'gl.hsvtex2d'(256)
+				:setWrap{
+					s = gl.GL_REPEAT,
+					t = gl.GL_REPEAT,
+				}
+				:unbind()
+			return tex
 		end,
 	},
 	{
@@ -643,11 +476,8 @@ local gradients = {
 				n, 1, 4, 'unsigned char', function(u)
 					local s = (u+.5)/n
 					-- TODO this but in shader so we can dynamically change it
-					if bit.band(u, 15) == 0 then
-						return 255*(1-s),127,255*s,255
-					else
-						return 0,0,0,0
-					end
+					local alpha = bit.band(u, 15) == 0 and 255 or 0
+					return 255*(1-s),0,255*s,alpha
 				end
 			)
 			return GLTex2D{
@@ -663,8 +493,8 @@ local gradients = {
 				--magFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
 				magFilter = gl.GL_LINEAR,
 				wrap = {
-					s = gl.GL_CLAMP_TO_EDGE,
-					t = gl.GL_CLAMP_TO_EDGE,
+					s = gl.GL_REPEAT,
+					t = gl.GL_REPEAT,
 				},
 				generateMipmap = true,
 			}:unbind()
@@ -1183,6 +1013,7 @@ uniform sampler2D BTex;
 uniform sampler2D B2Tex;
 uniform sampler2D gradTex;
 uniform float alpha;
+uniform float gradScale;
 
 void main() {
 	float s = .5;
@@ -1204,7 +1035,7 @@ void main() {
 
 	fragColor = mix(
 		texture(earthTex, vec2(texcoordv.x, 1. - texcoordv.y)),
-		texture(gradTex, vec2(s, .5)),
+		texture(gradTex, vec2(s * gradScale, .5)),
 		hsvBlend);
 	fragColor.a = alpha;
 }
@@ -1538,6 +1369,7 @@ local function drawVectorField(chart, app)
 	local shader = app.vectorFieldShader
 	shader:use()
 	shader:setUniforms{
+		dt = guivars.fieldDT,
 		mvProjMat = app.view.mvProjMat.ptr,
 		arrowScale = scale,
 		fieldZScale = guivars.fieldZScale,
@@ -1618,6 +1450,7 @@ function App:update(...)
 	B2Tex:bind(3)
 
 	gl.glUniform1f(shader.uniforms.alpha.loc, 1)
+	gl.glUniform1f(shader.uniforms.gradScale.loc, guivars.gradScale)
 
 	shader:useNone()
 
@@ -1707,6 +1540,7 @@ function App:updateGUI()
 	for i,grad in ipairs(gradients) do
 		ig.luatableRadioButton(grad.name, guivars, 'gradientIndex', i-1)
 	end
+	ig.luatableInputFloat('gradScale', guivars, 'gradScale')
 
 	ig.luatableInputFloat('alpha', guivars, 'drawAlpha')
 	ig.luatableInputFloat('field z', guivars, 'fieldZScale')
@@ -1715,7 +1549,7 @@ function App:updateGUI()
 	-- how linear are the g and h coeffs?
 	-- can I just factor out the dt?
 	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
-	ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', 0, 20)
+	ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', -50, 50)
 end
 
 return App():run()
