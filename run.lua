@@ -804,7 +804,49 @@ void main() {
 	gl_Position = mvProjMat * vec4(vertex, 1.);
 }
 ]]
-	local calcBFragmentCode = template([[
+	self.quadGeom = GLGeometry{
+		mode = gl.GL_TRIANGLE_STRIP,
+		vertexes = {
+			data = {
+				0, 0,
+				1, 0,
+				0, 1,
+				1, 1,
+			},
+			dim = 2,
+		},
+	}
+
+	self.unitProjMat = matrix_ffi({4,4}, 'float'):zeros():setOrtho(0, 1, 0, 1, -1, 1)
+	--self.unitProjMat = matrix_ffi({4,4}, 'float'):zeros():setOrtho(-1, 1, -1, 1, 1, -1)	-- identity matrix
+
+	do
+		print'generating B field...'
+
+		-- can be arbitrary
+		-- but the WMM model is for 15 mins, so [360,180] x4
+		londim = 1440
+		latdim = 720
+
+		local fbo = require 'gl.fbo'()
+			:unbind()
+glreport'here'
+
+		local quadGeomVertexCode = [[
+layout(location=0) in vec2 vertex;
+out vec2 texcoordv;
+uniform mat4 mvProjMat;
+void main() {
+	texcoordv = vertex;
+	gl_Position = mvProjMat * vec4(vertex, 0., 1.);
+}
+]]
+
+		local calcBShader = GLProgram{
+			version = 'latest',
+			precision = 'best',
+			vertexCode = quadGeomVertexCode,
+			fragmentCode = template([[
 uniform float dt;
 
 ]]..calc_b_shader..[[
@@ -820,61 +862,20 @@ void main() {
 	fragColor = vec4(B, 1.);
 }
 ]],
-		{
-			dt = 0,
-			wgs84 = wgs84,
-			wmm = wmm,
-		}
-	)
-
-	path'calc_b.postproc.frag':write(calcBFragmentCode)
-
-
-	self.quadGeom = GLGeometry{
-		mode = gl.GL_TRIANGLE_STRIP,
-		vertexes = {
-			data = {
-				0, 0,
-				1, 0,
-				0, 1,
-				1, 1,
-			},
-			dim = 2,
-		},
-	}
-
-	self.unitProjMat= matrix_ffi({4,4}, 'float'):zeros():setOrtho(0, 1, 0, 1, 0, 1)
-
-	do
-		print'generating B field...'
-
-		-- can be arbitrary
-		-- but the WMM model is for 15 mins, so [360,180] x4
-		londim = 1440
-		latdim = 720
-
-		local fbo = require 'gl.fbo'()
-			:unbind()
-glreport'here'
-
-		local calcBShader = GLProgram{
-			version = 'latest',
-			precision = 'best',
-			vertexCode = vertexCode,
-			fragmentCode = calcBFragmentCode,
-			uniforms = {
-				mvProjMat = self.unitProjMat.ptr,
-			},
-		}
-glreport'here'
-		calcBShader:useNone()
+				{
+					dt = 0,
+					wgs84 = wgs84,
+					wmm = wmm,
+				}
+			),
+		}:useNone()
 glreport'here'
 
 		BTex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
-			format = gl.GL_RGB,
+			format = gl.GL_RGBA,
 			type = gl.GL_FLOAT,
 			minFilter = gl.GL_NEAREST,--gl.GL_LINEAR,
 			magFilter = gl.GL_NEAREST,
@@ -885,40 +886,23 @@ glreport'here'
 		}:unbind()
 glreport'here'
 
-		local Bdata = ffi.new('vec4f_t[?]', londim * latdim)
-		calcBShader:use()
+		local calcBSceneObj = GLSceneObject{
+			program = calcBShader,
+			geometry = self.quadGeom,
+		}
+
+		local BData = ffi.new('vec4f_t[?]', londim * latdim)
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
-			resetProjection = true,	-- not gles compat
 			dest = BTex,
-			--[[
 			callback = function()
-				self.quadGeom:draw()
+				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+				calcBSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
+				calcBSceneObj:draw()
+				gl.glReadPixels(0, 0, BTex.width, BTex.height, gl.GL_RGBA, gl.GL_FLOAT, BData)
 			end,
-			--]]
 		}
-		calcBShader:useNone()
 glreport'here'
-
-		--[[ read with fbo/readpixels
-		fbo:draw{
-			viewport = {0, 0, londim, latdim},
-			dest = BTex,
-			callback = function()
-				gl.glReadPixels(0, 0, BTex.width, BTex.height, gl.GL_RGBA, gl.GL_FLOAT, Bdata)
-			end,
-		}
-		BTex:unbind()
-		--]]
-		-- [[ read with getteximage
-		BTex:bind()
-		BTex:toCPU(Bdata)
-		BTex:unbind()
-		for i=0,londim*latdim-1 do
---			print('b', i, Bdata[i])
-		end
-		--]]
-
 		BTex:bind()
 --			:generateMipmap()
 			:unbind()
@@ -932,7 +916,7 @@ glreport'here'
 		local calcB2Shader = GLProgram{
 			version = 'latest',
 			precision = 'best',
-			vertexCode = vertexCode,
+			vertexCode = quadGeomVertexCode,
 			fragmentCode = template([[
 uniform float dt;
 
@@ -986,9 +970,6 @@ void main() {
 					dt = 0,
 				}
 			),
-			uniforms = {
-				mvProjMat = self.unitProjMat.ptr,
-			},
 		}:useNone()
 glreport'here'
 
@@ -1007,42 +988,30 @@ glreport'here'
 		}:unbind()
 glreport'here'
 
-		-- only used for stat calc
-		local B2data = ffi.new('vec4f_t[?]', londim * latdim)
+		local calcB2SceneObj = GLSceneObject{
+			program = calcB2Shader,
+			geometry = self.quadGeom,
+		}
 
-		--calcB2Shader:use()	-- TODO not working ...
+
+		-- only used for stat calc
+		local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
-			resetProjection = true,	-- not gles compat
 			dest = B2Tex,
-			--shader = calcB2Shader,
-			--[=[
 			callback = function()
-				calcB2Shader:use()
-				self.quadGeom:draw()
-				calcB2Shader:useNone()
-				--[[ read with readpixels
-				gl.glReadPixels(0, 0, B2Tex.width, B2Tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2data)
-				--]]
+				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+				calcB2SceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
+				calcB2SceneObj:draw()
+				gl.glReadPixels(0, 0, B2Tex.width, B2Tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2Data)
 			end,
-			--]=]
 		}
-		calcB2Shader:useNone()
-glreport'here'
-		-- [[ read with getteximage
-		B2Tex:bind()
-		B2Tex:toCPU(B2data)
-		B2Tex:unbind()
-		for i=0,londim*latdim-1 do
---			print('b2', i, B2data[i])
-		end
-		--]]
 glreport'here'
 
 		--B2Tex:generateMipmap()
 
 		local statgens = table{
-			function(B, B2) return B:length() end,
+			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) end,	-- not :length() since it's vec4...
 			function(B, B2) return B.x end,
 			function(B, B2) return B.y end,
 			function(B, B2) return B.z end,
@@ -1056,8 +1025,8 @@ glreport'here'
 		for j=0,latdim-1 do
 			for i=0,londim-1 do
 				local e = i + londim * j
-				local B = Bdata[e]
-				local B2 = B2data[e]
+				local B = BData[e]
+				local B2 = B2Data[e]
 				local Bmag = B:length()
 				BStat:accum(
 					statgens:mapi(function(f)
@@ -1084,8 +1053,8 @@ glreport'here'
 		for j=0,latdim-1 do
 			for i=0,londim-1 do
 				local e = i + londim * j
-				local B = Bdata[e]
-				local B2 = B2data[e]
+				local B = BData[e]
+				local B2 = B2Data[e]
 				local Bmag = B:length()
 				for i=1,#bins do
 					local stat = BStat[i]
