@@ -1,5 +1,6 @@
 #!/usr/bin/env luajit
 local cmdline = require 'ext.cmdline'(...)
+local assertindex = require 'ext.assert'.index
 local gl = require 'gl.setup'(cmdline.gl or 'OpenGL')
 local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
@@ -14,6 +15,8 @@ local path = require 'ext.path'
 local glreport = require 'gl.report'
 local ig = require 'imgui'
 local GLTex2D = require 'gl.tex2d'
+local GLFBO = require 'gl.fbo'
+local GLArrayBuffer = require 'gl.arraybuffer'
 local GLProgram = require 'gl.program'
 local GLGeometry = require 'gl.geometry'
 local GLSceneObject = require 'gl.sceneobject'
@@ -348,7 +351,6 @@ local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
 local BTex
 local B2Tex
 
-
 local earthtex
 
 local App = require 'imguiapp.withorbit'()
@@ -357,7 +359,7 @@ App.title = 'EM field'
 
 
 local guivars = {
-	geomIndex = 2,	-- north pole
+	geomIndex = 1,
 	overlayIndex = 1,
 	gradientIndex = 0,
 
@@ -383,21 +385,46 @@ function Geom:init(args)
 	end
 end
 
-local charts = require 'geographic-charts'	-- TODO switch to this
-charts.Equirectangular:build()
---charts.WGS84_a = wgs84.a
+local allCharts = require 'geographic-charts'	-- TODO switch to this
+
+-- which charts we want to allow ...
+local chartNames = table{
+	'Equirectangular',
+	'Azimuthal equidistant',
+	'Mollweide',
+	'WGS84',
+}
+
+local chartIndexForName = chartNames:mapi(function(v,i) return i,v end)
+
+local charts = table()
+for i,name in ipairs(chartNames) do
+	local chart = assertindex(allCharts, name)
+	charts[i] = chart
+	charts[name] = chart
+end
+
 charts['Azimuthal equidistant'].R = .5 * math.pi
-charts['Azimuthal equidistant']:build()
-if charts['Mollweide'].build then charts['Mollweide']:build() end
-if charts['WGS84'].build then charts['WGS84']:build() end
+--allCharts.WGS84_a = wgs84.a
+for _,name in ipairs(chartNames) do
+	local c = charts[name]
+	if c.build then c:build() end
+end
+
+local chartCNames = charts:mapi(function(chart) return chart:getCName() end)
+
+-- TODO this but only for the charts we're using ...
+--require 'geographic-charts.buildall'
+local chartCode = require 'geographic-charts.code'(charts)
+--local chartCode = modules:getCodeAndHeader(table.mapi(charts, function(c) return c:getSymbol() end):unpack())
 
 for _,c in ipairs(charts) do
 	local oldChartFunc = c.chart
 	function c:chart(phi, lambda, height)
 		local x, y, z = oldChartFunc(self, math.deg(phi), math.deg(lambda), height)
-		x = x / charts.WGS84_a
-		y = y / charts.WGS84_a
-		z = z / charts.WGS84_a
+		x = x / allCharts.WGS84_a
+		y = y / allCharts.WGS84_a
+		z = z / allCharts.WGS84_a
 		return x, y, z
 	end
 
@@ -425,14 +452,8 @@ for _,c in ipairs(charts) do
 	end
 end
 
-local geoms = {
-	charts.Equirectangular,
-	charts['Azimuthal equidistant'],
-	charts.Mollweide,
-	charts.WGS84,
-}
 --[=[
-local geoms = {
+local charts = {
 	Geom{
 		name = 'Equirectangular',
 		chartObj = charts.Equirectangular,
@@ -454,9 +475,9 @@ local geoms = {
 --]]
 -- [[
 			local x, y, z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
-			x = x / charts.WGS84_a
-			y = y / charts.WGS84_a
-			z = z / charts.WGS84_a
+			x = x / allCharts.WGS84_a
+			y = y / allCharts.WGS84_a
+			z = z / allCharts.WGS84_a
 			return x,y,z
 --]]
 		end,
@@ -502,9 +523,9 @@ local geoms = {
 -- [[
 			local x, y, z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
 			-- TODO is this the correct adjustment for height?
-			x = x / charts.WGS84_a
-			y = y / charts.WGS84_a
-			z = z / charts.WGS84_a
+			x = x / allCharts.WGS84_a
+			y = y / allCharts.WGS84_a
+			z = z / allCharts.WGS84_a
 			--print(x,y,z)
 			return x,y,z
 --]]
@@ -559,9 +580,9 @@ local geoms = {
 --]]
 -- [[
 			local x,y,z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
-			x = x / charts.WGS84_a
-			y = y / charts.WGS84_a
-			z = z / charts.WGS84_a
+			x = x / allCharts.WGS84_a
+			y = y / allCharts.WGS84_a
+			z = z / allCharts.WGS84_a
 			return x, y, z
 --]]
 		end,
@@ -586,9 +607,9 @@ local geoms = {
 --]]
 -- [[
 			local x,y,z = self.chartObj:chart(math.deg(phi), math.deg(lambda), height)
-			x = x / charts.WGS84_a
-			y = y / charts.WGS84_a
-			z = z / charts.WGS84_a
+			x = x / allCharts.WGS84_a
+			y = y / allCharts.WGS84_a
+			z = z / allCharts.WGS84_a
 			return x, y, z
 --]]
 		end,
@@ -629,7 +650,7 @@ local gradients = {
 					end
 				end
 			)
-			return require 'gl.tex2d'{
+			return GLTex2D{
 				--image = image,
 				data = image.buffer,
 				width = image.width,
@@ -720,39 +741,27 @@ local overlays = {
 	},
 }
 
-for _,c in ipairs(charts) do
+for chartIndex,c in ipairs(charts) do
 	function c:draw(app, shader, gradtex)
 		local height = 0
-		local jres = 120
-		local ires = 60
+		local jres = 360
+		local ires = 180
 		if not self.sceneobj then
 			local vertexes = table()
-			local texcoords = table()
 			for i=0,ires do
 				local u = i/ires
 				local phi = math.rad((u * 2 - 1) * 90)
 				for j=0,jres do
 					local v = j/jres
 					local lambda = math.rad((v * 2 - 1) * 180)
-					local x,y,z = self:chart(phi, lambda, height)
-					texcoords:append{v, u}
-					vertexes:append{x, y, z}
+					vertexes:append{v, u}	-- lon, lat = u, v in texcoord space
 				end
 			end
-			local GLArrayBuffer = require 'gl.arraybuffer'
 			self.vertexBuf = GLArrayBuffer{
-				type = gl.GL_FLOAT,
 				data = vertexes,
-				count = #vertexes / 3,
-				dim = 3,
-			}:unbind()
-			self.texcoordBuf = GLArrayBuffer{
-				type = gl.GL_FLOAT,
-				data = texcoords,
-				count = #texcoords / 2,
 				dim = 2,
 			}:unbind()
-			
+
 			local geometries = table()
 			for ibase=0,ires-1 do
 				local indexes = table()
@@ -765,10 +774,7 @@ for _,c in ipairs(charts) do
 				geometries:insert(GLGeometry{
 					mode = gl.GL_TRIANGLE_STRIP,
 					indexes = {
-						type = gl.GL_UNSIGNED_INT,
 						data = indexes,
-						count = #indexes,
-						dim = 1,
 					},
 					vertexes = self.vertexBuf,
 				})
@@ -779,16 +785,17 @@ for _,c in ipairs(charts) do
 				vertexes = self.vertexBuf,
 				geometries = geometries,
 				texs = {earthtex, gradtex, BTex, B2Tex},
-				attrs = {
-					texcoord = {
-						buffer = self.texcoordBuf,
-					},
-				},
 			}
 		end
+		
 		self.sceneobj.program = shader
 		self.sceneobj.texs[2] = gradtex
 		self.sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
+		self.sceneobj.uniforms['weight_Equirectangular'] = chartIndex == 1 and 1 or 0
+		self.sceneobj.uniforms['weight_Azimuthal_equidistant'] = chartIndex == 2 and 1 or 0
+		self.sceneobj.uniforms['weight_Mollweide'] = chartIndex == 3 and 1 or 0
+		self.sceneobj.uniforms['weight_WGS84'] = chartIndex == 4 and 1 or 0
+		self.sceneobj.uniforms.chartIs3D = self.is3D or false
 		self.sceneobj:draw()
 	end
 end
@@ -814,16 +821,6 @@ function App:initGL(...)
 
 	local calc_b_shader = path'calc_b.shader':read()
 
-	local vertexCode = [[
-layout(location=0) in vec3 vertex;
-layout(location=1) in vec2 texcoord;
-out vec2 texcoordv;
-uniform mat4 mvProjMat;
-void main() {
-	texcoordv = texcoord;
-	gl_Position = mvProjMat * vec4(vertex, 1.);
-}
-]]
 	self.quadGeom = GLGeometry{
 		mode = gl.GL_TRIANGLE_STRIP,
 		vertexes = {
@@ -848,7 +845,7 @@ void main() {
 		londim = 1440
 		latdim = 720
 
-		local fbo = require 'gl.fbo'()
+		local fbo = GLFBO()
 			:unbind()
 glreport'here'
 
@@ -911,6 +908,7 @@ glreport'here'
 			geometry = self.quadGeom,
 		}
 
+		-- BData / B2Data is only used for stat computation
 		local BData = ffi.new('vec4f_t[?]', londim * latdim)
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
@@ -1107,12 +1105,53 @@ glreport'here'
 
 	glreport'here'
 
+	local overlayVertexCode = chartCode..template([[
 
-	for _,overlay in ipairs(overlays) do
+<? for _,name in ipairs(chartCNames) do
+?>uniform float weight_<?=name?>;
+<? end
+?>
+uniform bool chartIs3D;
+
+layout(location=0) in vec2 vertex;
+out vec2 texcoordv;
+uniform mat4 mvProjMat;
+void main() {
+	texcoordv = vertex;	//(lon, lat) in [0,1]
+
+	vec3 coords = vec3(
+		(vertex.y - .5) * 180.,	// lat in deg, [-90, 90]
+		(vertex.x - .5) * 360.,	// lon in deg, [-180, 180]
+		0.);						// height in meters
+
+	// expect vertex xyz to be lat lon height
+	// lat and lon is in degrees
+	// height is in meters
+	vec3 pos = 0.
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>(coords)
+<? end
+?>	;
+	//from meters to normalized coordinates
+	pos /= WGS84_a;
+
+	if (chartIs3D) {
+		pos = vec3(pos.x, pos.z, pos.y);
+		pos = vec3(pos.y, pos.x, pos.z);
+	}
+
+	gl_Position = mvProjMat * vec4(pos, 1.);
+}
+]],
+	{
+		chartCNames = chartCNames,
+	})
+
+	for i,overlay in ipairs(overlays) do
 		overlay.shader = GLProgram{
 			version = 'latest',
 			precision = 'best',
-			vertexCode = vertexCode,
+			vertexCode = overlayVertexCode,
 			fragmentCode = template([[
 uniform float dt;
 	
@@ -1184,14 +1223,16 @@ void main() {
 					clnumber = clnumber,
 				}
 			),
-			uniforms = {
+			uniforms = table({
 				earthTex = 0,
 				gradTex = 1,
 				BTex = 2,
 				B2Tex = 3,
 				alpha = 1,
 				dt = 0,
-			},
+			}, chartCNames:mapi(function(name,j)
+				return j==i and 1 or 0, 'weight_'..name
+			end)):setmetatable(nil),
 		}:useNone()
 	end
 
@@ -1270,10 +1311,19 @@ void main() {
 	self.vectorFieldShader = GLProgram{
 		version = 'latest',
 		precision = 'best',
-		vertexCode = [[
+		vertexCode = chartCode
+..template([[
+
+<? for _,name in ipairs(chartCNames) do
+?>uniform float weight_<?=name?>;
+<? end
+?>
+
 layout(location=0) in vec2 vertex;
+
 in vec3 pos;
 in vec3 ex, ey, ez;
+
 uniform mat4 mvProjMat;
 uniform float arrowScale;
 uniform float fieldZScale;
@@ -1281,8 +1331,8 @@ uniform float fieldZScale;
 #if 1	// B coeffs using attributes
 in vec3 BCoeffs;
 #endif
+in vec3 coords;		// lat lon height in degrees degrees meters
 #if 0	// B coeffs using textures
-in vec2 coords;
 uniform sampler2D BTex;
 #endif
 
@@ -1311,6 +1361,19 @@ vec3 perpTo(vec3 v) {
 }
 
 void main() {
+#if 0	
+	// expect vertex xyz to be lat lon height
+	// lat and lon is in degrees
+	// height is in meters
+	vec3 pos = 0.
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>(coords)
+<? end
+?>	;
+	//from meters to normalized coordinates
+	pos /= WGS84_a;
+#endif
+
 #if 0	// B coeffs using textures
 	vec3 BCoeffs = texture(BTex, coords).xyz;
 #endif
@@ -1320,12 +1383,21 @@ void main() {
 		+ ez * (BCoeffs.z * fieldZScale)
 	);
 	//vec3 Bp = perpTo(B);			// cross with furthest axis
-	vec3 Bp = vec3(-B.y, B.x, 0.);	// cross with z axis
+	//vec3 Bp = vec3(-B.y, B.x, 0.);	// cross with z axis
+	vec3 Bp = arrowScale * (
+		 -ey * BCoeffs.x
+		+ ex * BCoeffs.y
+		+ ez * (BCoeffs.z * fieldZScale)
+	);
+
 	gl_Position = mvProjMat * vec4(
 		pos + vertex.x * B + vertex.y * Bp,
 		1.);
 }
 ]],
+		{
+			chartCNames = chartCNames,
+		}),
 		fragmentCode = [[
 out vec4 fragColor;
 void main() {
@@ -1348,7 +1420,7 @@ local function degmintofrac(deg, min, sec)
 end
 
 local function drawReading(info)
-	local geom = info.geom
+	local chart = info.chart
 
 	local height = 1e-2
 	local lat = degmintofrac(table.unpack(info.lat))
@@ -1359,11 +1431,11 @@ local function drawReading(info)
 	local lambda = math.rad(lon)
 	local headingRad = math.rad(info.heading)
 
-	local x,y,z = geom:chart(phi, lambda, height)
-	local ex, ey, ez = geom:basis(phi, lambda, height)
+	local x,y,z = chart:chart(phi, lambda, height)
+	local ex, ey, ez = chart:basis(phi, lambda, height)
 	local H = (ex * math.cos(headingRad) + ey * math.sin(headingRad)) * .2
 
-	-- TODO geom should be transforms, and apply to all geom rendered
+	-- TODO chart should be transforms, and apply to all chart rendered
 	self.pointSceneObj.uniforms.color = {1,1,0}
 	self.pointSceneObj.uniforms.pointSize = 5
 	self.pointSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
@@ -1403,9 +1475,9 @@ local function drawReading(info)
 		:unbind()
 	self.lineSceneObj:draw()
 
-	-- now use wgs84 here regardless of 'geom'
+	-- now use wgs84 here regardless of 'chart'
 	--local pos = vec3f(latLonToCartesianWGS84(phi, lambda, height))
-	local pos = vec3f(charts.WGS84:chart(math.rad(phi), math.rad(lambda), height)) / charts.WGS84_a
+	local pos = vec3f(charts.WGS84:chart(math.rad(phi), math.rad(lambda), height)) / allCharts.WGS84_a
 	local ex, ey, ez = charts.WGS84:basis(math.rad(phi), math.rad(lambda), .1)
 	local H = (ex * math.cos(headingRad) + ey * math.sin(headingRad)) * .2
 
@@ -1420,12 +1492,12 @@ local function drawReading(info)
 	gl.glColor3f(1,1,1)
 	gl.glBegin(gl.GL_LINE_STRIP)
 
-	gl.glVertex3f(geom:chart(cartesianToLatLonWGS84(pos:unpack())))
+	gl.glVertex3f(chart:chart(cartesianToLatLonWGS84(pos:unpack())))
 	for i=1,numSteps do
 
 		q:rotate(pos, pos)
---print(pos, geom:chart(cartesianToLatLonWGS84(pos:unpack())))
-		gl.glVertex3f(geom:chart(cartesianToLatLonWGS84(pos:unpack())))
+--print(pos, chart:chart(cartesianToLatLonWGS84(pos:unpack())))
+		gl.glVertex3f(chart:chart(cartesianToLatLonWGS84(pos:unpack())))
 	end
 
 	--[[
@@ -1441,7 +1513,7 @@ local function drawReading(info)
 	gl.glEnd()
 end
 
-local function drawVectorField(geom, app)
+local function drawVectorField(chart, app)
 
 	local arrow = {
 		{-.5, 0.},
@@ -1454,7 +1526,7 @@ local function drawVectorField(geom, app)
 
 	local height = 0
 	local jres = 60
-	local ires = 30
+	local ires = 30	-- ires is the height ...
 	local scale = guivars.arrowScale  / (BStat.mag.max * ires)
 
 	local shader = app.vectorFieldShader
@@ -1463,35 +1535,49 @@ local function drawVectorField(geom, app)
 		mvProjMat = app.view.mvProjMat.ptr,
 		arrowScale = scale,
 		fieldZScale = guivars.fieldZScale,
+		weight_Equidistant = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0,
+		weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0,
+		weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0,
+		weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0,
 	}
 	--[[ B coeffs using textures
 	BTex:bind()
 	--]]
 
 	gl.glBegin(gl.GL_LINES)
+	
 	for i=0,ires-1 do
 		local u = (i + .5) / ires
-		local phi = math.rad((u * 2 - 1) * 90)
-		for j=0,jres-1 do
-			local v = (j + .5) / jres
-			local lambda = math.rad((v * 2 - 1) * 180)
-			local x,y,z = geom:chart(phi, lambda, 0)
+		local lat = (u * 2 - 1) * 90
+		local phi = math.rad(lat)
+
+		--[[ equal res at all latitudes
+		local thisjres = jres
+		--]]
+		-- [[ proportional to the latitude arclen
+		local thisjres = math.max(1, math.ceil(jres * math.cos(phi)))
+		--]]
+		for j=0,thisjres-1 do
+			local v = (j + .5) / thisjres
+			local lon = (v * 2 - 1) * 180
+			local lambda = math.rad(lon)
+			
+			--gl.glVertexAttrib3f(shader.attrs.coords.loc, lat, lon, 0)
+
+			local x,y,z = chart:chart(phi, lambda, 0)
 			gl.glVertexAttrib3f(shader.attrs.pos.loc, x, y, z)
 
 			-- [[ B coeffs using attributes
 			gl.glVertexAttrib3f(shader.attrs.BCoeffs.loc, calcB(phi, lambda, height))	-- B field = north, east, down component
 			--]]
-			--[[ B coeffs using textures
-			gl.glVertexAttrib2f(shader.attrs.coords.loc, u, v)
-			--]]
 
-			local ex, ey, ez = geom:basis(phi, lambda, height)
+			local ex, ey, ez = chart:basis(phi, lambda, height)
 			gl.glVertexAttrib3f(shader.attrs.ex.loc, ex:unpack())
 			gl.glVertexAttrib3f(shader.attrs.ey.loc, ey:unpack())
 			gl.glVertexAttrib3f(shader.attrs.ez.loc, ez:unpack())
 
 			--[[ verify the basis is correct
-			scale = 3 / jres
+			scale = 3 / thisjres
 			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ex.x * scale, y + ex.y * scale, z + ex.z * scale)
 			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ey.x * scale, y + ey.y * scale, z + ey.z * scale)
 			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ez.x * scale, y + ez.y * scale, z + ez.z * scale)
@@ -1518,7 +1604,7 @@ function App:update(...)
 
 	local shader = assert(overlays[tonumber(guivars.overlayIndex)+1]).shader
 	local gradtex = assert(gradients[tonumber(guivars.gradientIndex)+1]).tex
-	local geom = assert(geoms[tonumber(guivars.geomIndex)+1])
+	local chart = assert(charts[tonumber(guivars.geomIndex)])
 
 	shader:use()
 
@@ -1538,14 +1624,14 @@ function App:update(...)
 -- TODO more samples
 --[[
 	drawReading{
-		geom = geom,
+		chart = chart,
 		lat = {42, 52, 45.021},
 		lon = {74, 34, 16.004},
 		heading = 5,
 	}
 
 	drawReading{
-		geom = geom,
+		chart = chart,
 		lat = {33, 59, 38},		-- lat
 		lon = {-80, -27, -56},	-- lon
 		heading = -.5,
@@ -1553,7 +1639,7 @@ function App:update(...)
 --]]
 
 	if guivars.doDrawVectorField then
-		drawVectorField(geom, self)
+		drawVectorField(chart, self)
 	end
 
 	shader:use()
@@ -1561,9 +1647,9 @@ function App:update(...)
 	gl.glUniform1f(shader.uniforms.alpha.loc, guivars.drawAlpha)
 
 	gl.glCullFace(gl.GL_FRONT)
-	geom:draw(self, shader, gradtex)
+	chart:draw(self, shader, gradtex)
 	gl.glCullFace(gl.GL_BACK)
-	geom:draw(self, shader, gradtex)
+	chart:draw(self, shader, gradtex)
 
 	B2Tex:unbind(3)
 	BTex:unbind(2)
@@ -1596,16 +1682,16 @@ function App:updateGUI()
 	ig.luatableCheckbox('ortho', self.view, 'ortho')
 	ig.luatableCheckbox('draw vector field', guivars, 'doDrawVectorField')
 
-	ig.igText'geom'
-	for i,geom in ipairs(geoms) do
-		ig.luatableRadioButton(geom.name, guivars, 'geomIndex', i-1)
+	ig.igText'chart'
+	for i,chart in ipairs(charts) do
+		ig.luatableRadioButton(chart.name, guivars, 'geomIndex', i)
 	end
 
 	ig.igSeparator()
 
-	local geom = assert(geoms[tonumber(guivars.geomIndex)+1])
-	if geom.updateGUI then
-		geom:updateGUI()
+	local chart = assert(charts[tonumber(guivars.geomIndex)])
+	if chart.updateGUI then
+		chart:updateGUI()
 	end
 
 	ig.igSeparator()
