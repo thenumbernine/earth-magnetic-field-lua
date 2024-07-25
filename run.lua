@@ -721,7 +721,7 @@ local overlays = {
 }
 
 for _,c in ipairs(charts) do
-	function c:draw(app)
+	function c:draw(app, shader)
 		local height = 0
 		local jres = 120
 		local ires = 60
@@ -745,7 +745,7 @@ for _,c in ipairs(charts) do
 				end
 				self.sceneobjs:insert(GLSceneObject{
 					-- TODO make sure all shaders have same attributes at same locations for this to be able to interchange its shaders
-					program = assert(overlays[tonumber(guivars.overlayIndex)+1]).shader,
+					program = shader,
 					vertexes = {
 						data = vertexes,
 						count = #vertexes / 3,
@@ -767,6 +767,7 @@ for _,c in ipairs(charts) do
 			end
 		end
 		for _,sceneobj in ipairs(self.sceneobjs) do
+			sceneobj.program = shader
 			sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
 			sceneobj:draw()
 		end
@@ -877,7 +878,7 @@ glreport'here'
 			height = latdim,
 			format = gl.GL_RGBA,
 			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,--gl.GL_LINEAR,
+			minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
 			magFilter = gl.GL_NEAREST,
 			wrap = {
 				s = gl.GL_REPEAT,
@@ -904,7 +905,7 @@ glreport'here'
 		}
 glreport'here'
 		BTex:bind()
---			:generateMipmap()
+			:generateMipmap()
 			:unbind()
 glreport'here'
 
@@ -979,7 +980,7 @@ glreport'here'
 			height = latdim,
 			format = gl.GL_RGBA,
 			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,--gl.GL_LINEAR,
+			minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
 			magFilter = gl.GL_NEAREST,
 			wrap = {
 				s = gl.GL_REPEAT,
@@ -992,7 +993,6 @@ glreport'here'
 			program = calcB2Shader,
 			geometry = self.quadGeom,
 		}
-
 
 		-- only used for stat calc
 		local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
@@ -1007,8 +1007,9 @@ glreport'here'
 			end,
 		}
 glreport'here'
-
-		--B2Tex:generateMipmap()
+		B2Tex:bind()
+			:generateMipmap()
+			:unbind()
 
 		local statgens = table{
 			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) end,	-- not :length() since it's vec4...
@@ -1093,23 +1094,12 @@ glreport'here'
 			version = 'latest',
 			precision = 'best',
 			vertexCode = vertexCode,
-			fragmentCode = [[
+			fragmentCode = template([[
 uniform float dt;
+	
+]]..calc_b_shader..[[
 
-]]
-..
-template(
-	calc_b_shader,
-	{
-		wgs84 = wgs84,
-		wmm = wmm,
-	}
-)
-..
-template(
-[[
-
-#define CALC_B_ON_GPU
+//#define CALC_B_ON_GPU
 
 #define BMagMin <?=clnumber(BStat.mag.min)?>
 #define BMagMax <?=clnumber(BStat.mag.max)?>
@@ -1165,11 +1155,15 @@ void main() {
 		hsvBlend);
 	fragColor.a = alpha;
 }
-]], 		{
-				overlay = overlay,
-				BStat = BStat,
-				clnumber = clnumber,
-			}),
+]],
+				{
+					wgs84 = wgs84,
+					wmm = wmm,
+					overlay = overlay,
+					BStat = BStat,
+					clnumber = clnumber,
+				}
+			),
 			uniforms = {
 				earthTex = 0,
 				gradTex = 1,
@@ -1178,8 +1172,7 @@ void main() {
 				alpha = 1,
 				dt = 0,
 			},
-		}
-		overlay.shader:useNone()
+		}:useNone()
 	end
 
 	if self.view then
@@ -1548,9 +1541,9 @@ function App:update(...)
 	gl.glUniform1f(shader.uniforms.alpha.loc, guivars.drawAlpha)
 
 	gl.glCullFace(gl.GL_FRONT)
-	geom:draw(self)
+	geom:draw(self, shader)
 	gl.glCullFace(gl.GL_BACK)
-	geom:draw(self)
+	geom:draw(self, shader)
 
 	B2Tex:unbind(3)
 	BTex:unbind(2)
