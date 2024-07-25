@@ -350,7 +350,6 @@ local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
 
 local BTex
 local B2Tex
-
 local earthtex
 
 local App = require 'imguiapp.withorbit'()
@@ -431,26 +430,9 @@ for _,c in ipairs(charts) do
 	end
 
 	local oldBasisFunc = c.basis
-	-- TODO why is there no consistent transform here?
-	if c == charts.Equirectangular then
-		function c:basis(phi, lambda, height)
-			local ex, ey, ez = oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
-			return ex, ey, -ez
-		end
-	elseif c == charts['Azimuthal equidistant'] then
-		function c:basis(phi, lambda, height)
-			local ex, ey, ez = oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
-			-- TODO why this transform?
-			-- and why not this transform for Equirectangular?
-			ex:set(-ex.y, ex.x, -ex.z)
-			ey:set(-ey.y, ey.x, -ey.z)
-			ez:set(-ez.y, ez.x, -ez.z)
-			return ex, ey, ez
-		end
-	else
-		function c:basis(phi, lambda, height)
-			return oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
-		end
+	function c:basis(phi, lambda, height)
+		local ex, ey, ez = oldBasisFunc(self, math.deg(phi), math.deg(lambda), height)
+		return ex, ey, ez
 	end
 end
 
@@ -675,6 +657,54 @@ function App:initGL(...)
 		-- but the WMM model is for 15 mins, so [360,180] x4
 		londim = 1440
 		latdim = 720
+
+		-- while we're here, generate the basis tex
+		-- i've only got a script implementation for it for now
+		-- but i could generate a GLSL one from the expressions ...
+--[[
+require 'vec-ffi.quatf'
+		local basisTexData = ffi.new('quatf_t[?]', londim * latdim)
+print"calculating basis..."
+		for _,chart in ipairs(charts) do
+			local index = 0
+			for j=0,latdim-1 do
+				local v = (j + .5) / latdim
+				local lat = (v * 2 - 1) * 90
+				local phi = math.rad(lat)
+
+				for i=0,londim-1 do
+					local u = (i + .5) / londim
+					local lon = (u * 2 - 1) * 180
+					local lambda = math.rad(lon)
+
+					local ex, ey, ez = chart:basis(phi, lambda, 0)
+					ez = -ez	-- left-hand to right-hand
+--DEBUG:require 'ext.assert'.ge(ex:cross(ey):dot(ez), .9)
+					basisTexData[index]:fromMatrix{ex, ey, ez}:normalize()
+					index = index + 1
+				end
+			end
+
+			chart.basisTex = GLTex2D{
+				internalFormat = gl.GL_RGBA32F,
+				width = londim,
+				height = latdim,
+				format = gl.GL_RGBA,
+				type = gl.GL_FLOAT,
+				minFilter = gl.GL_LINEAR,
+				magFilter = gl.GL_NEAREST,
+				wrap = {
+					s = gl.GL_REPEAT,
+					t = gl.GL_REPEAT,
+				},
+				data = basisTexData,
+				generateMipmap = true,
+			}:unbind()
+			chart.basisTex.data = nil	-- don't keep track of it since we're reusing this buffer
+		end
+print"...done calculating basis"
+glreport'here'
+--]]
 
 		local fbo = GLFBO()
 			:unbind()
@@ -1146,14 +1176,21 @@ uniform float dt;
 ?>
 uniform bool chartIs3D;
 
-layout(location=0) in vec2 vertex;
+layout(location=0) in vec3 vertex;
 
-in vec3 texcoord;
-in vec3 ex, ey, ez;
+in vec2 texcoord;
+
+out vec3 colorv;
 
 uniform mat4 mvProjMat;
 uniform float arrowScale;
 uniform float fieldZScale;
+
+#if 0	//basis from texture
+uniform sampler2D basisTex;
+#else	//basis from attribs
+in vec3 ex, ey, ez;
+#endif
 
 #if 0	// B coeffs using textures
 uniform sampler2D BTex;
@@ -1183,8 +1220,29 @@ vec3 perpTo(vec3 v) {
 	}
 }
 
+vec3 xAxis(vec4 q) {
+	return vec3(
+		1. - 2. * (q.y * q.y + q.z * q.z),
+		2. * (q.x * q.y + q.z * q.w),
+		2. * (q.x * q.z - q.w * q.y));
+}
+
+vec3 yAxis(vec4 q) {
+	return vec3(
+		2. * (q.x * q.y - q.w * q.z),
+		1. - 2. * (q.x * q.x + q.z * q.z),
+		2. * (q.y * q.z + q.w * q.x));
+}
+
+vec3 zAxis(vec4 q) {
+	return vec3(
+		2. * (q.x * q.z + q.w * q.y),
+		2. * (q.y * q.z - q.w * q.x),
+		1. - 2. * (q.x * q.x + q.y * q.y));
+}
+
 void main() {
-	vec3 coords = vec3(	
+	vec3 coords = vec3(
 		(texcoord.y - .5) * 180.,	// lat in deg
 		(texcoord.x - .5) * 360., 	// lon in deg
 		0.);						// height in m
@@ -1200,13 +1258,14 @@ void main() {
 	//from meters to normalized coordinates
 	pos /= WGS84_a;
 
+	// TODO why correct for pos but not basis ?
 	if (chartIs3D) {
 		pos = vec3(pos.z, pos.x, pos.y);
 	}
 
 #if 0	// B coeffs using textures
-	vec3 BCoeffs = texture(BTex, coords).xyz;
-#else	// on GPU
+	vec3 BCoeffs = texture(BTex, texcoord).xyz;
+#elif 1	// on GPU
 	vec3 BCoeffs = calcB(vec3(
 		(texcoord.y - .5) * M_PI,			//phi
 		(texcoord.x - .5) * 2. * M_PI,		//lambda
@@ -1214,21 +1273,34 @@ void main() {
 	));
 #endif
 
+	// BCoeffs.z points inwards
+	// I just changed ez to consistently point outwards (maybe I shouldn't have)
+	BCoeffs.z = -BCoeffs.z;
+
+#if 0	//basis from texture ... seems very inaccurate ...
+	vec4 basisQuat = normalize(texture(basisTex, texcoord));
+	vec3 ex = xAxis(basisQuat);
+	vec3 ey = yAxis(basisQuat);
+	vec3 ez = -zAxis(basisQuat);
+#endif
+
 	vec3 B = arrowScale * (
 		  ex * BCoeffs.x
 		+ ey * BCoeffs.y
 		+ ez * (BCoeffs.z * fieldZScale)
 	);
-	//vec3 Bp = perpTo(B);			// cross with furthest axis
-	//vec3 Bp = vec3(-B.y, B.x, 0.);	// cross with z axis
-	vec3 Bp = arrowScale * (
-		 -ey * BCoeffs.x
-		+ ex * BCoeffs.y
+	//vec3 Bey = perpTo(B);			// cross with furthest axis
+	//vec3 Bey = vec3(-B.y, B.x, 0.);	// cross with z axis
+	vec3 Bey = arrowScale * (
+		  ey * BCoeffs.x
+		- ex * BCoeffs.y
 		+ ez * (BCoeffs.z * fieldZScale)
 	);
 
+	vec3 Bez = ez;
+
 	gl_Position = mvProjMat * vec4(
-		pos + vertex.x * B + vertex.y * Bp,
+		pos + vertex.x * B + vertex.y * Bey + vertex.z * Bez * fieldZScale,
 		1.);
 }
 ]],
@@ -1242,7 +1314,8 @@ void main() {
 }
 ]],
 		uniforms = {
-			BTex = 0,
+			basisTex = 0,
+			BTex = 1,
 		},
 	}:useNone()
 
@@ -1353,18 +1426,33 @@ end
 local function drawVectorField(chart, app)
 
 	local arrow = {
+		-- [[ arrow for real
 		{-.5, 0.},
 		{.5, 0.},
 		{.2, .3},
 		{.5, 0.},
 		{.2, -.3},
 		{.5, 0.},
+		--]]
+		--[[ debug basis display
+		{0,0,0},
+		{1,0,0},
+		{0,0,0},
+		{0,1,0},
+		{0,0,0},
+		{0,0,1},
+		--]]
 	}
 
 	local height = 0
-	local jres = 60
-	local ires = 30	-- ires is the height ...
-	local scale = guivars.arrowScale  / (BStat.mag.max * ires)
+	local londim = 60
+	local latdim = 30
+	-- [[
+	local scale = guivars.arrowScale  / (BStat.mag.max * latdim)
+	--]]
+	--[[ debug basis display
+	local scale = .5 / 30
+	--]]
 
 	local shader = app.vectorFieldShader
 	shader:use()
@@ -1379,54 +1467,47 @@ local function drawVectorField(chart, app)
 		weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0,
 		chartIs3D = chart.is3D or false,
 	}
+	chart.basisTex:bind()
 	--[[ B coeffs using textures
 	BTex:bind()
 	--]]
 
 	gl.glBegin(gl.GL_LINES)
 
-	for i=0,ires-1 do
-		local u = (i + .5) / ires
-		local lat = (u * 2 - 1) * 90
+	for j=0,latdim-1 do
+		local v = (j + .5) / latdim
+		local lat = (v * 2 - 1) * 90
 		local phi = math.rad(lat)
 
 		--[[ equal res at all latitudes
-		local thisjres = jres
+		local thislondim = londim
 		--]]
 		-- [[ proportional to the latitude arclen
-		local thisjres = math.max(1, math.ceil(jres * math.cos(phi)))
+		local thislondim = math.max(1, math.ceil(londim * math.cos(phi)))
 		--]]
-		for j=0,thisjres-1 do
-			local v = (j + .5) / thisjres
-			local lon = (v * 2 - 1) * 180
+		for i=0,thislondim-1 do
+			local u = (i + .5) / thislondim
+			local lon = (u * 2 - 1) * 180
 			local lambda = math.rad(lon)
 
-			gl.glVertexAttrib2f(shader.attrs.texcoord.loc, v, u)
+			gl.glVertexAttrib2f(shader.attrs.texcoord.loc, u, v)
 
+			-- [[
 			local ex, ey, ez = chart:basis(phi, lambda, height)
 			gl.glVertexAttrib3f(shader.attrs.ex.loc, ex:unpack())
 			gl.glVertexAttrib3f(shader.attrs.ey.loc, ey:unpack())
 			gl.glVertexAttrib3f(shader.attrs.ez.loc, ez:unpack())
-
-			--[[ verify the basis is correct
-			scale = 3 / thisjres
-			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ex.x * scale, y + ex.y * scale, z + ex.z * scale)
-			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ey.x * scale, y + ey.y * scale, z + ey.z * scale)
-			gl.glVertex3f(x, y, z)	gl.glVertex3f(x + ez.x * scale, y + ez.y * scale, z + ez.z * scale)
 			--]]
-			-- [[ draw our arrow
+
 			-- TODO instanced geometry?  any faster?
 			for _,q in ipairs(arrow) do
 				gl.glVertex2f(q[1], q[2])
 			end
-			--]]
 		end
 	end
 	gl.glEnd()
 
-	--[[ B coeffs using textures
-	BTex:unbind()
-	--]]
+	GLTex2D:unbind()
 	shader:useNone()
 end
 
