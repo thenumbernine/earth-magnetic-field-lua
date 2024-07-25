@@ -678,7 +678,6 @@ print"calculating basis..."
 					local lambda = math.rad(lon)
 
 					local ex, ey, ez = chart:basis(phi, lambda, 0)
-					ez = -ez	-- left-hand to right-hand
 --DEBUG:require 'ext.assert'.ge(ex:cross(ey):dot(ez), .9)
 					basisTexData[index]:fromMatrix{ex, ey, ez}:normalize()
 					index = index + 1
@@ -1273,15 +1272,11 @@ void main() {
 	));
 #endif
 
-	// BCoeffs.z points inwards
-	// I just changed ez to consistently point outwards (maybe I shouldn't have)
-	BCoeffs.z = -BCoeffs.z;
-
 #if 0	//basis from texture ... seems very inaccurate ...
 	vec4 basisQuat = normalize(texture(basisTex, texcoord));
 	vec3 ex = xAxis(basisQuat);
 	vec3 ey = yAxis(basisQuat);
-	vec3 ez = -zAxis(basisQuat);
+	vec3 ez = zAxis(basisQuat);
 #endif
 
 	vec3 B = arrowScale * (
@@ -1467,7 +1462,9 @@ local function drawVectorField(chart, app)
 		weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0,
 		chartIs3D = chart.is3D or false,
 	}
+	--[[ basis using textures
 	chart.basisTex:bind()
+	--]]
 	--[[ B coeffs using textures
 	BTex:bind()
 	--]]
