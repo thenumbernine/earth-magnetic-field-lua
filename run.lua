@@ -363,8 +363,8 @@ App.title = 'EM field'
 
 local guivars = {
 	geomIndex = 1,
-	overlayIndex = 1,
-	gradientIndex = 0,
+	overlayIndex = 2,
+	gradientIndex = 1,
 
 	drawAlpha = 1,
 	doDrawVectorField = true,
@@ -607,6 +607,9 @@ for chartIndex,c in ipairs(charts) do
 		self.sceneobj.program = shader
 		self.sceneobj.texs[2] = gradtex
 		self.sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
+		self.sceneobj.uniforms.dt = guivars.fieldDT
+		self.sceneobj.uniforms.alpha = guivars.drawAlpha
+		self.sceneobj.uniforms.gradScale = guivars.gradScale
 		self.sceneobj.uniforms['weight_Equirectangular'] = chartIndex == 1 and 1 or 0
 		self.sceneobj.uniforms['weight_Azimuthal_equidistant'] = chartIndex == 2 and 1 or 0
 		self.sceneobj.uniforms['weight_Mollweide'] = chartIndex == 3 and 1 or 0
@@ -1346,6 +1349,7 @@ local function degmintofrac(deg, min, sec)
 	return deg + (1/60) * (min + (1/60) * sec)
 end
 
+--[=[
 local function drawReading(info)
 	local chart = info.chart
 
@@ -1439,6 +1443,7 @@ local function drawReading(info)
 
 	gl.glEnd()
 end
+--]=]
 
 local function drawVectorField(app, chart)
 	local height = 0
@@ -1620,25 +1625,9 @@ end
 function App:update(...)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
-	local shader = assert(overlays[tonumber(guivars.overlayIndex)+1]).shader
-	local gradtex = assert(gradients[tonumber(guivars.gradientIndex)+1]).tex
+	local shader = assert(overlays[tonumber(guivars.overlayIndex)]).shader
+	local gradtex = assert(gradients[tonumber(guivars.gradientIndex)]).tex
 	local chart = assert(charts[tonumber(guivars.geomIndex)])
-
-	shader:use()
-
-	if shader.uniforms.dt then
-		gl.glUniform1f(shader.uniforms.dt.loc, guivars.fieldDT)
-	end
-
-	earthtex:bind(0)
-	gradtex:bind(1)
-	BTex:bind(2)
-	B2Tex:bind(3)
-
-	gl.glUniform1f(shader.uniforms.alpha.loc, 1)
-	gl.glUniform1f(shader.uniforms.gradScale.loc, guivars.gradScale)
-
-	shader:useNone()
 
 -- TODO more samples
 --[[
@@ -1664,21 +1653,10 @@ function App:update(...)
 		drawFieldLines(self, chart)
 	end
 
-	shader:use()
-
-	gl.glUniform1f(shader.uniforms.alpha.loc, guivars.drawAlpha)
-
 	gl.glCullFace(gl.GL_FRONT)
 	chart:draw(self, shader, gradtex)
 	gl.glCullFace(gl.GL_BACK)
 	chart:draw(self, shader, gradtex)
-
-	B2Tex:unbind(3)
-	BTex:unbind(2)
-	gradtex:unbind(1)
-	earthtex:unbind(0)
-
-	shader:useNone()
 
 	glreport'here'
 
@@ -1721,14 +1699,14 @@ function App:updateGUI()
 
 	ig.igText'overlay'
 	for i,overlay in ipairs(overlays) do
-		ig.luatableRadioButton(overlay.name, guivars, 'overlayIndex', i-1)
+		ig.luatableRadioButton(overlay.name, guivars, 'overlayIndex', i)
 	end
 
 	ig.igSeparator()
 
 	ig.igText'gradient'
 	for i,grad in ipairs(gradients) do
-		ig.luatableRadioButton(grad.name, guivars, 'gradientIndex', i-1)
+		ig.luatableRadioButton(grad.name, guivars, 'gradientIndex', i)
 	end
 	ig.luatableInputFloat('gradScale', guivars, 'gradScale')
 
