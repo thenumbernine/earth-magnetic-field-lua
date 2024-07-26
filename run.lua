@@ -1180,7 +1180,7 @@ uniform float dt;
 ?>
 uniform bool chartIs3D;
 
-layout(location=0) in vec3 vertex;
+layout(location=0) in vec2 vertex;
 
 in vec2 texcoord;
 
@@ -1246,7 +1246,7 @@ vec3 zAxis(vec4 q) {
 }
 
 void main() {
-	vec3 coords = vec3(
+	vec3 latLonHeight = vec3(
 		(texcoord.y - .5) * 180.,	// lat in deg
 		(texcoord.x - .5) * 360., 	// lon in deg
 		0.);						// height in m
@@ -1256,7 +1256,7 @@ void main() {
 	// height is in meters
 	vec3 pos = 0.
 <? for _,name in ipairs(chartCNames) do
-?>		+ weight_<?=name?> * chart_<?=name?>(coords)
+?>		+ weight_<?=name?> * chart_<?=name?>(latLonHeight)
 <? end
 ?>	;
 	//from meters to normalized coordinates
@@ -1297,10 +1297,9 @@ void main() {
 		+ ez * (BCoeffs.z * fieldZScale)
 	);
 
-	vec3 Bez = ez;
-
 	gl_Position = mvProjMat * vec4(
-		pos + vertex.x * B + vertex.y * Bey + vertex.z * Bez * fieldZScale,
+		pos + vertex.x * B
+			+ vertex.y * Bey,
 		1.);
 }
 ]],
@@ -1314,8 +1313,8 @@ void main() {
 }
 ]],
 		uniforms = {
-			basisTex = 0,
-			BTex = 1,
+			--basisTex = 0,
+			--BTex = 1,
 		},
 	}:useNone()
 
@@ -1442,88 +1441,95 @@ local function drawReading(info)
 end
 
 local function drawVectorField(app, chart)
-
-	local arrow = {
-		-- [[ arrow for real
-		{-.5, 0.},
-		{.5, 0.},
-		{.2, .3},
-		{.5, 0.},
-		{.2, -.3},
-		{.5, 0.},
-		--]]
-		--[[ debug basis display
-		{0,0,0},
-		{1,0,0},
-		{0,0,0},
-		{0,1,0},
-		{0,0,0},
-		{0,0,1},
-		--]]
-	}
-
 	local height = 0
 	local londim = 60
 	local latdim = 30
-	-- [[
 	local scale = guivars.arrowScale  / (BStat.mag.max * latdim)
-	--]]
-	--[[ debug basis display
-	local scale = .5 / 30
-	--]]
 
-	local shader = app.vectorFieldShader
-	shader:use()
-	shader:setUniforms{
-		dt = guivars.fieldDT,
-		mvProjMat = app.view.mvProjMat.ptr,
-		arrowScale = scale,
-		fieldZScale = guivars.fieldZScale,
-		weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0,
-		weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0,
-		weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0,
-		weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0,
-		chartIs3D = chart.is3D or false,
-	}
-	--[[ basis using textures
-	chart.basisTex:bind()
-	--]]
-	--[[ B coeffs using textures
-	BTex:bind()
-	--]]
+	if not chart.arrowFieldSceneObj then
+print('building arrow field for '..chart.name)
+		local arrow = {
+			{-.5, 0.},
+			{.5, 0.},
+			{.2, .3},
+			{.5, 0.},
+			{.2, -.3},
+			{.5, 0.},
+		}
 
-	gl.glBegin(gl.GL_LINES)
+		local vertexes = table()
+		local texcoords = table()
+		local exs = table()
+		local eys = table()
+		local ezs = table()
 
-	for j=0,latdim-1 do
-		local v = (j + .5) / latdim
-		local lat = (v * 2 - 1) * 90
-		local phi = math.rad(lat)
+		for j=0,latdim-1 do
+			local v = (j + .5) / latdim
+			local lat = (v * 2 - 1) * 90
+			local phi = math.rad(lat)
 
-		local thislondim = math.max(1, math.ceil(londim * math.cos(phi)))
-		for i=0,thislondim-1 do
-			local u = (i + .5) / thislondim
-			local lon = (u * 2 - 1) * 180
-			local lambda = math.rad(lon)
+			local thislondim = math.max(1, math.ceil(londim * math.cos(phi)))
+			for i=0,thislondim-1 do
+				local u = (i + .5) / thislondim
+				local lon = (u * 2 - 1) * 180
+				local lambda = math.rad(lon)
 
-			gl.glVertexAttrib2f(shader.attrs.texcoord.loc, u, v)
+				-- TODO move basis calculation to GPU and calculate the texcoords from instanced geometry?  would that be any faster?
+				local ex, ey, ez = chart:basis(phi, lambda, height)
+				for _,q in ipairs(arrow) do
+					texcoords:insert(u)
+					texcoords:insert(v)
 
-			-- [[ TODO move this to GPU so I can use instanced geom draws
-			local ex, ey, ez = chart:basis(phi, lambda, height)
-			gl.glVertexAttrib3f(shader.attrs.ex.loc, ex:unpack())
-			gl.glVertexAttrib3f(shader.attrs.ey.loc, ey:unpack())
-			gl.glVertexAttrib3f(shader.attrs.ez.loc, ez:unpack())
-			--]]
+					exs:insert(ex.x)
+					exs:insert(ex.y)
+					exs:insert(ex.z)
 
-			-- TODO instanced geometry?  any faster?
-			for _,q in ipairs(arrow) do
-				gl.glVertex2f(q[1], q[2])
+					eys:insert(ey.x)
+					eys:insert(ey.y)
+					eys:insert(ey.z)
+
+					ezs:insert(ez.x)
+					ezs:insert(ez.y)
+					ezs:insert(ez.z)
+
+					vertexes:insert(q[1])
+					vertexes:insert(q[2])
+				end
 			end
 		end
-	end
-	gl.glEnd()
 
-	GLTex2D:unbind()
-	shader:useNone()
+		chart.arrowFieldSceneObj = GLSceneObject{
+			program = app.vectorFieldShader,
+			vertexes = { data = vertexes, dim = 2, },
+			geometry = { mode = gl.GL_LINES, },
+			texs = {
+				--[[ basis using textures
+				chart.basisTex:bind()
+				--]]
+				--[[ B coeffs using textures
+				BTex:bind()
+				--]]
+			},
+			attrs = {
+				texcoord = { buffer = { data = texcoords, dim = 2, } },
+				ex = { buffer = { data = exs, dim = 3, } },
+				ey = { buffer = { data = eys, dim = 3, } },
+				ez = { buffer = { data = ezs, dim = 3, } },
+			},
+		}
+print('...done building arrow field')
+	end
+
+	chart.arrowFieldSceneObj.uniforms.dt = guivars.fieldDT
+	chart.arrowFieldSceneObj.uniforms.mvProjMat = app.view.mvProjMat.ptr
+	chart.arrowFieldSceneObj.uniforms.arrowScale = scale
+	chart.arrowFieldSceneObj.uniforms.fieldZScale = guivars.fieldZScale
+	chart.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
+	chart.arrowFieldSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
+	chart.arrowFieldSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
+	chart.arrowFieldSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
+	chart.arrowFieldSceneObj.uniforms.chartIs3D = chart.is3D or false
+	chart.arrowFieldSceneObj:draw()
 end
 
 function drawFieldLines(app, chart)
@@ -1557,7 +1563,7 @@ function drawFieldLines(app, chart)
 					local height = height0
 
 					local indexes = table()
-					
+
 					-- this is in earth rad units ...
 					local x, y, z = chart:chart(phi, lambda, height)
 					indexes:insert(#vertexes / 3)
@@ -1586,7 +1592,7 @@ function drawFieldLines(app, chart)
 						vertexes:insert(y)
 						vertexes:insert(z)
 					end
-				
+
 					geometries:insert{
 						mode = gl.GL_LINE_STRIP,
 						indexes = {
