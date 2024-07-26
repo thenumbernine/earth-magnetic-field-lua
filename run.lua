@@ -1,6 +1,7 @@
 #!/usr/bin/env luajit
 local cmdline = require 'ext.cmdline'(...)
 local assertindex = require 'ext.assert'.index
+local math = require 'ext.math'	-- isfinite
 local gl = require 'gl.setup'(cmdline.gl or 'OpenGL')
 local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
@@ -71,6 +72,7 @@ end
 
 local nMax = #wmm
 
+-- ported from WMM2020 GeomagnetismLibrary.c
 -- phi = radians
 -- lambda = radians
 -- height = meters
@@ -94,7 +96,7 @@ local function calcB(phi, lambda, height)
 	-- end MAG_GeodeticToSpherical
 
 	-- begin MAG_Geomag
-	-- begin MAG_ComputeSphericalHarmonicVariables
+		-- begin MAG_ComputeSphericalHarmonicVariables
 
 	local cosLambda = math.cos(lambda)
 	local sinLambda = math.sin(lambda)
@@ -114,10 +116,10 @@ local function calcB(phi, lambda, height)
 		sinLambdaToTheM[m] = cosLambdaToTheM[m-1] * sinLambda + sinLambdaToTheM[m-1] * cosLambda
 	end
 
-	-- end MAG_ComputeSphericalHarmonicVariables
-	-- begin MAG_AssociatedLegendreFunction
+		-- end MAG_ComputeSphericalHarmonicVariables
+		-- begin MAG_AssociatedLegendreFunction
 
-	-- begin MAG_PcupLow
+			-- begin MAG_PcupLow
 
 	local x = sinPhiSph
 	local Pcup = {[0] = 1}
@@ -185,9 +187,9 @@ local function calcB(phi, lambda, height)
 		end
 	end
 
-	-- end MAG_PcupLow
-	-- end MAG_AssociatedLegendreFunction
-	-- begin MAG_Summation
+			-- end MAG_PcupLow
+		-- end MAG_AssociatedLegendreFunction
+		-- begin MAG_Summation
 
 	local Bz = 0
 	local By = 0
@@ -283,14 +285,16 @@ local function calcB(phi, lambda, height)
 		-- end MAG_SummationSpecial
 	end
 
-	-- end MAG_Summation
+		-- end MAG_Summation
 	-- end MAG_Geomag
 
 	return Bx, By, Bz
 end
 
+-- ported from WMM2020 GeomagnetismLibrary.c
 -- expects xyz in cartesian units of wgs84's 'a' parameter
--- TODO just use charts.WGS84:chartInv(x,y,z) ?
+-- output is in (radians, radians, km)
+-- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
 local function cartesianToLatLonWGS84(x, y, z)
 	x = x * wgs84.a
 	y = y * wgs84.a
@@ -334,7 +338,7 @@ local function cartesianToLatLonWGS84(x, y, z)
 	while lambda > math.pi do
 		lambda= lambda - 2 * math.pi
 	end
-	return phi, lambda, height
+	return phi, lambda, height * 1e+3		-- km back to m
 end
 
 --[[
@@ -789,6 +793,19 @@ glreport'here'
 			:unbind()
 glreport'here'
 
+--[[
+		for j=0,latdim-1 do
+			local v = (j + .5) / latdim
+			local lat = (v * 2 - 1) * 90
+			local phi = math.rad(lat)
+			for i=0,londim-1 do
+				local u = (i + .5) / londim
+				local lon = (u * 2 - 1) * 180
+				local lambda = math.rad(lon)
+				print(BData[i+londim*j], calcB(phi, lambda, 0))
+			end
+		end
+--]]
 
 -- [=[ hmm, better way than copy paste?
 
@@ -1542,7 +1559,7 @@ function drawFieldLines(app, chart)
 	local latdim = 15
 	local height0 = 0
 
-	local dparam = 1e-2
+	local wgs84_a_in_m = wgs84.a * 1e+3
 
 	if not chart.fieldLineSceneObj then
 		print('building field lines for '..chart.name)
@@ -1555,7 +1572,8 @@ function drawFieldLines(app, chart)
 			local lat = (v * 2 - 1) * 90
 			local phi0 = math.rad(lat)
 
-			local thislondim = math.max(1, math.ceil(londim * math.cos(phi0)))
+			--local thislondim = math.max(1, math.ceil(londim * math.cos(phi0)))
+			local thislondim = londim
 			for i=0,thislondim-1 do
 				local u = (i + .5) / thislondim
 				local lon = (u * 2 - 1) * 180
@@ -1569,6 +1587,7 @@ function drawFieldLines(app, chart)
 
 					local indexes = table()
 
+--[=[ trying to integrate in phi,lambda,height space ...
 					-- this is in earth rad units ...
 					local x, y, z = chart:chart(phi, lambda, height)
 					indexes:insert(#vertexes / 3)
@@ -1580,16 +1599,44 @@ function drawFieldLines(app, chart)
 						-- B field in north, east, downward components ...
 						local Bx, By, Bz = calcB(phi, lambda, height)
 
+						--local dparam = .015 * wgs84_a_in_m
+						local dparam = .015
+
 						local Bmag = math.sqrt(Bx*Bx + By*By + Bz*Bz)
 						local invBmag = 1 / Bmag
 
-						local r = math.sqrt(x*x + y*y + z*z)		-- radial distance, proportional to wgs84.a
-						local dphi = sign * dparam * Bx * invBmag * r
-						local dlambda = sign * dparam * By * invBmag * r
-						local dheight = -sign * dparam * Bz * invBmag * wgs84.a * 1000	-- height is in meters
+						local truex, truey, truez = charts.WGS84:chart(phi, lambda, height) -- in units of wgs84 a
+--						truex = truex * wgs84_a_in_m		-- now in meters
+--						truey = truey * wgs84_a_in_m		-- now in meters
+--						truez = truez * wgs84_a_in_m		-- now in meters
+
+						local r = math.sqrt(truex^2 + truey^2 + truez^2)		-- radial distance in meters
+						r = r * wgs84_a_in_m	-- in meters
+						if r < 100000 then break end
+
+						-- |e_h| = 1
+						-- height is in meters upwards (so sign flip), B = ∂r/∂t is already in meters height is in meters
+						--local dheight = -sign * dparam * Bz * invBmag -- * (wgs84_a_in_m)
+						-- ... scale all up by r cos(phi) ...
+						local dheight = -sign * dparam * Bz * invBmag * r * math.cos(phi) -- * (wgs84_a_in_m)
+
+						-- phi is in radians, so convert our B = ∂r/∂t from meters to radians: divide it by the radial value
+						-- |e_φ| = spherical |e_(π/2 - θ)| = r
+						--local dphi = sign * dparam * Bx * invBmag / r
+						-- ... scale all up by r cos(phi) ...
+						local dphi = sign * dparam * Bx * invBmag * math.cos(phi)
+
+						-- |e_λ| = spherical |e_φ| = spherical r sin(θ) = r cos(φ)
+						--local dlambda = sign * dparam * By * invBmag / (r * math.cos(phi))
+						-- ... scale all up by r cos(phi) ...
+						local dlambda = sign * dparam * By * invBmag
+
 						phi = phi + dphi
 						lambda = lambda + dlambda
 						height = height + dheight
+
+						--phi = ((phi + math.pi / 2) % math.pi) - math.pi / 2
+						--lambda = ((lambda + math.pi) % (2 * math.pi)) - math.pi
 
 						x, y, z = chart:chart(phi, lambda, height)
 						indexes:insert(#vertexes / 3)
@@ -1597,6 +1644,62 @@ function drawFieldLines(app, chart)
 						vertexes:insert(y)
 						vertexes:insert(z)
 					end
+--]=]
+-- [=[ just use cartesian
+
+					local x, y, z = chart:chart(phi, lambda, height)
+					indexes:insert(#vertexes / 3)
+					vertexes:insert(x)
+					vertexes:insert(y)
+					vertexes:insert(z)
+
+					local cx, cy, cz = charts.WGS84:chart(phi, lambda, height)
+
+--[[
+local checkphi, checklambda, checkheight = cartesianToLatLonWGS84(cx, cy, cz)
+local checkdphi = math.abs(phi - checkphi)
+local checkdlambda = math.abs(lambda - checklambda)
+local checkdheight = math.abs(height - checkheight)
+if checkdphi > 1e-4 or checkdlambda > 1e-4 or checkdheight > 1e-4 then
+print('plh', phi, checkphi, lambda, checklambda, height, checkheight)
+end
+
+local checkx, checky, checkz = charts.WGS84:chart(checkphi, checklambda, checkheight)
+local checkdx = math.abs(cx - checkx)
+local checkdy = math.abs(cy - checky)
+local checkdz = math.abs(cz - checkz)
+if checkdx > 1e-4 or checkdy > 1e-4 or checkdz > 1e-4 then
+print('xyz', cx, checkx, cy, checky, cz, checkz)
+end
+--]]
+--print()
+					for k=1,200 do
+						local dparam = 1e-2
+						local ex, ey, ez = charts.WGS84:basis(phi, lambda, height)
+						local Bx, By, Bz = calcB(phi, lambda, height)
+						--local dv = Bx * ex + By * ey + Bz * ez
+						local dv = vec3f(
+							Bx * ex.x + By * ey.x + Bz * ez.x,
+							Bx * ex.y + By * ey.y + Bz * ez.y,
+							Bx * ex.z + By * ey.z + Bz * ez.z)
+						--local BmagSq = Bx^2 + By^2 + Bz^2
+						--if BmagSq < 100 then break end
+						local n = dv:normalize() * dparam
+--print(phi, lambda, height, ex, ey, ez, Bx, By, Bz, dv, n)
+--print(cx, cy, cz, n)
+						cx = cx + n.x
+						cy = cy + n.y
+						cz = cz + n.z
+						phi, lambda, height = cartesianToLatLonWGS84(cx, cy, cz)
+
+						indexes:insert(#vertexes / 3)
+						local x, y, z = chart:chart(phi, lambda, height)
+						if not math.isfinite(x) or not math.isfinite(y) or not math.isfinite(z) then break end
+						vertexes:insert(x)
+						vertexes:insert(y)
+						vertexes:insert(z)
+					end
+--]=]
 
 					geometries:insert{
 						mode = gl.GL_LINE_STRIP,
