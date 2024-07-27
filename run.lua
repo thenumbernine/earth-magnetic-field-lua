@@ -562,7 +562,7 @@ local overlays = {
 }
 
 for chartIndex,c in ipairs(charts) do
-	function c:draw(app, shader, gradtex)
+	function c:draw(app, shader, gradTex)
 		local height = 0
 		local jres = 360
 		local ires = 180
@@ -604,12 +604,12 @@ for chartIndex,c in ipairs(charts) do
 				program = shader,
 				vertexes = self.vertexBuf,
 				geometries = geometries,
-				texs = {earthtex, gradtex, BTex, B2Tex},
+				texs = {earthtex, gradTex, BTex, B2Tex},
 			}
 		end
 
 		self.sceneobj.program = shader
-		self.sceneobj.texs[2] = gradtex
+		self.sceneobj.texs[2] = gradTex
 		self.sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
 		self.sceneobj.uniforms.dt = guivars.fieldDT
 		self.sceneobj.uniforms.alpha = guivars.drawAlpha
@@ -1355,7 +1355,7 @@ void main() {
 				--BTex = 1,
 			},
 		}:useNone()
-	
+
 		local arrow = {
 			{-.5, 0.},
 			{.5, 0.},
@@ -1408,24 +1408,31 @@ void main() {
 print('...done building arrow field')
 	end
 
-	self.fieldLineShader = GLProgram{
-		version = 'latest',
-		precision = 'best',
-		vertexCode = chartCode..template([[
+	print('building field lines...')
+	do
+		local fieldLineShader = GLProgram{
+			version = 'latest',
+			precision = 'best',
+			vertexCode = chartCode..template([[
 <? for _,name in ipairs(chartCNames) do
 ?>uniform float weight_<?=name?>;
 <? end
 ?>
 uniform bool chartIs3D;
 
-//vertex = (phi (rad), lambda (rad), height (meters))
-layout(location=0) in vec3 vertex;
+uniform vec2 BMag;	// (min, max)
+
+//vertex = (phi (rad), lambda (rad), height (meters), |B|)
+layout(location=0) in vec4 vertex;
+out float BFrac;
 
 uniform mat4 mvProjMat;
 void main() {
 	vec3 latLonHeight = vec3(
 		vertex.xy * (180. / M_PI),
 		vertex.z);
+
+	BFrac = (vertex.w - BMag.x) / (BMag.y - BMag.x);
 
 	vec3 pos = 0.
 <? for _,name in ipairs(chartCNames) do
@@ -1441,24 +1448,25 @@ void main() {
 
 	gl_Position = mvProjMat * vec4(pos, 1.);
 }
-]],		{
-			chartCNames = chartCNames,
-		}),
-		fragmentCode = [[
+]],			{
+				chartCNames = chartCNames,
+			}),
+			fragmentCode = [[
+in float BFrac;
 out vec4 fragColor;
+uniform sampler2D gradTex;
 void main() {
-	fragColor = vec4(1., 1., 1., 1.);
+	fragColor = texture(gradTex, vec2(BFrac, .5));
 }
 ]],
-	}:useNone()
+			{
+				gradTex = 0,
+			},
+		}:useNone()
 
-	print('building field lines...')
-	do
 		local londim = 30
 		local latdim = 15
 		local height0 = 0
-
-		local wgs84_a_in_m = wgs84.a * 1e+3
 
 		local vertexes = table()
 		local geometries = table()
@@ -1476,49 +1484,34 @@ void main() {
 				local lambda0 = math.rad(lon)
 
 				for sign=-1,1,2 do
-
 					local phi = phi0
 					local lambda = lambda0
 					local height = height0
 
 					local indexes = table()
 
--- [=[ just use cartesian
-					indexes:insert(#vertexes / 3)
+--DEBUG:assert(#vertexes % 4 == 0)
+					indexes:insert(#vertexes / 4)
 					vertexes:insert(phi)
 					vertexes:insert(lambda)
 					vertexes:insert(height)
+--DEBUG:assert(#vertexes % 4 == 3)
 
 					local cx, cy, cz = charts.WGS84:chart(phi, lambda, height)
-
---[[
-local checkphi, checklambda, checkheight = cartesianToLatLonWGS84(cx, cy, cz)
-local checkdphi = math.abs(phi - checkphi)
-local checkdlambda = math.abs(lambda - checklambda)
-local checkdheight = math.abs(height - checkheight)
-if checkdphi > 1e-4 or checkdlambda > 1e-4 or checkdheight > 1e-4 then
-print('plh', phi, checkphi, lambda, checklambda, height, checkheight)
-end
-
-local checkx, checky, checkz = charts.WGS84:chart(checkphi, checklambda, checkheight)
-local checkdx = math.abs(cx - checkx)
-local checkdy = math.abs(cy - checky)
-local checkdz = math.abs(cz - checkz)
-if checkdx > 1e-4 or checkdy > 1e-4 or checkdz > 1e-4 then
-print('xyz', cx, checkx, cy, checky, cz, checkz)
-end
---]]
---print()
-					for k=1,200 do
+					for k=1,400 do
+--DEBUG:assert(#vertexes % 4 == 3)
 						local dparam = sign * 1e-2
 						local ex, ey, ez = charts.WGS84:basis(phi, lambda, height)
 						local Bx, By, Bz = calcB(phi, lambda, height)
+						local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
+						vertexes:insert(Bmag)
+--DEBUG:assert(#vertexes % 4 == 0)
+
 						--local dv = Bx * ex + By * ey + Bz * ez
 						local dv = vec3f(
 							Bx * ex.x + By * ey.x + Bz * ez.x,
 							Bx * ex.y + By * ey.y + Bz * ez.y,
 							Bx * ex.z + By * ey.z + Bz * ez.z)
-						--local BmagSq = Bx^2 + By^2 + Bz^2
 						--if BmagSq < 100 then break end
 						local n = dv:normalize() * dparam
 						cx = cx + n.x
@@ -1528,12 +1521,21 @@ end
 						if rSq < .1 then break end
 						phi, lambda, height = cartesianToLatLonWGS84(cx, cy, cz)
 
-						indexes:insert(#vertexes / 3)
+						-- TODO color by Bmag ...
+--DEBUG:assert(#vertexes % 4 == 0)
+						indexes:insert(#vertexes / 4)
 						vertexes:insert(phi)
 						vertexes:insert(lambda)
 						vertexes:insert(height)
+--DEBUG:assert(#vertexes % 4 == 3)
 					end
---]=]
+					if #vertexes % 4 == 3 then
+						local Bx, By, Bz = calcB(phi, lambda, height)
+						local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
+--DEBUG:assert(#vertexes % 4 == 3)
+						vertexes:insert(Bmag)
+--DEBUG:assert(#vertexes % 4 == 0, '#vertexes '..#vertexes)
+					end
 
 					geometries:insert{
 						mode = gl.GL_LINE_STRIP,
@@ -1545,10 +1547,10 @@ end
 			end
 		end
 		self.fieldLineSceneObj = GLSceneObject{
-			program = self.fieldLineShader,
+			program = fieldLineShader,
 			vertexes = {
 				data = vertexes,
-				dim = 3,
+				dim = 4,
 			},
 			geometries = geometries,
 		}
@@ -1665,7 +1667,7 @@ function App:update(...)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
 	local shader = assert(overlays[tonumber(guivars.overlayIndex)]).shader
-	local gradtex = assert(gradients[tonumber(guivars.gradientIndex)]).tex
+	local gradTex = assert(gradients[tonumber(guivars.gradientIndex)]).tex
 	local chart = assert(charts[tonumber(guivars.geomIndex)])
 
 -- TODO more samples
@@ -1698,20 +1700,22 @@ function App:update(...)
 		self.arrowFieldSceneObj:draw()
 	end
 	if guivars.doDrawFieldLines then
+		self.fieldLineSceneObj.texs[1] = gradTex
 		self.fieldLineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		self.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
 		self.fieldLineSceneObj.uniforms.chartIs3D = chart.is3D or false
+		self.fieldLineSceneObj.uniforms.BMag = {BStat.mag.min, BStat.mag.max}
 		self.fieldLineSceneObj:draw()
 	end
 
 	-- why cull each side separately?
 	--gl.glCullFace(gl.GL_FRONT)
-	chart:draw(self, shader, gradtex)
+	chart:draw(self, shader, gradTex)
 	--gl.glCullFace(gl.GL_BACK)
-	--chart:draw(self, shader, gradtex)
+	--chart:draw(self, shader, gradTex)
 
 	glreport'here'
 
