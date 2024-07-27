@@ -1185,10 +1185,17 @@ void main() {
 		},
 	}
 
-	self.vectorFieldShader = GLProgram{
-		version = 'latest',
-		precision = 'best',
-		vertexCode = chartCode
+	do
+print('building arrow field')
+		local height = 0
+		local londim = 60
+		local latdim = 30
+		local baseScale = 1 / latdim
+
+		local arrowFieldShader = GLProgram{
+			version = 'latest',
+			precision = 'best',
+			vertexCode = chartCode
 ..[[
 uniform float dt;
 ]]..calc_b_shader
@@ -1212,7 +1219,7 @@ uniform float fieldZScale;
 
 #if 0	//basis from texture
 uniform sampler2D basisTex;
-#else	//basis from attribs
+#elif 0	//basis from attribs
 in vec3 ex, ey, ez;
 #endif
 
@@ -1302,16 +1309,25 @@ void main() {
 	vec3 ex = xAxis(basisQuat);
 	vec3 ey = yAxis(basisQuat);
 	vec3 ez = zAxis(basisQuat);
+#else	//basis from glsl code
+	mat3 e = mat3(vec3(0.), vec3(0.), vec3(0.))
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>_basis(latLonHeight)
+<? end
+?>	;
+	vec3 ex = normalize(e[0]);
+	vec3 ey = normalize(e[1]);
+	vec3 ez = normalize(e[2]);
 #endif
 
-	vec3 B = arrowScale * (
+	vec3 B = arrowScale * <?=clnumber(baseScale)?> * (
 		  ex * BCoeffs.x
 		+ ey * BCoeffs.y
 		+ ez * (BCoeffs.z * fieldZScale)
 	);
 	//vec3 Bey = perpTo(B);			// cross with furthest axis
 	//vec3 Bey = vec3(-B.y, B.x, 0.);	// cross with z axis
-	vec3 Bey = arrowScale * (
+	vec3 Bey = arrowScale * <?=clnumber(baseScale)?> * (
 		  ey * BCoeffs.x
 		- ex * BCoeffs.y
 		+ ez * (BCoeffs.z * fieldZScale)
@@ -1323,20 +1339,74 @@ void main() {
 		1.);
 }
 ]],
-		{
-			chartCNames = chartCNames,
-		}),
-		fragmentCode = [[
+			{
+				baseScale = baseScale,
+				clnumber = clnumber,
+				chartCNames = chartCNames,
+			}),
+			fragmentCode = [[
 out vec4 fragColor;
 void main() {
 	fragColor = vec4(1., 1., 1., 1.);
 }
 ]],
-		uniforms = {
-			--basisTex = 0,
-			--BTex = 1,
-		},
-	}:useNone()
+			uniforms = {
+				--basisTex = 0,
+				--BTex = 1,
+			},
+		}:useNone()
+	
+		local arrow = {
+			{-.5, 0.},
+			{.5, 0.},
+			{.2, .3},
+			{.5, 0.},
+			{.2, -.3},
+			{.5, 0.},
+		}
+
+		local vertexes = table()
+		local texcoords = table()
+
+		for j=0,latdim-1 do
+			local v = (j + .5) / latdim
+			local lat = (v * 2 - 1) * 90
+			local phi = math.rad(lat)
+
+			local thislondim = math.max(1, math.ceil(londim * math.cos(phi)))
+			for i=0,thislondim-1 do
+				local u = (i + .5) / thislondim
+				local lon = (u * 2 - 1) * 180
+				local lambda = math.rad(lon)
+
+				for _,q in ipairs(arrow) do
+					texcoords:insert(u)
+					texcoords:insert(v)
+
+					vertexes:insert(q[1])
+					vertexes:insert(q[2])
+				end
+			end
+		end
+
+		self.arrowFieldSceneObj = GLSceneObject{
+			program = arrowFieldShader,
+			vertexes = { data = vertexes, dim = 2, },
+			geometry = { mode = gl.GL_LINES, },
+			texs = {
+				--[[ basis using textures
+				chart.basisTex:bind()
+				--]]
+				--[[ B coeffs using textures
+				BTex:bind()
+				--]]
+			},
+			attrs = {
+				texcoord = { buffer = { data = texcoords, dim = 2, } },
+			},
+		}
+print('...done building arrow field')
+	end
 
 	self.fieldLineShader = GLProgram{
 		version = 'latest',
@@ -1591,109 +1661,6 @@ local function drawReading(info)
 end
 --]=]
 
-local function drawArrowField(app, chart)
-	local height = 0
-	local londim = 60
-	local latdim = 30
-	local scale = guivars.arrowScale  / (BStat.mag.max * latdim)
-
-	if not chart.arrowFieldSceneObj then
-print('building arrow field for '..chart.name)
-		local arrow = {
-			{-.5, 0.},
-			{.5, 0.},
-			{.2, .3},
-			{.5, 0.},
-			{.2, -.3},
-			{.5, 0.},
-		}
-
-		local vertexes = table()
-		local texcoords = table()
-		local exs = table()
-		local eys = table()
-		local ezs = table()
-
-		for j=0,latdim-1 do
-			local v = (j + .5) / latdim
-			local lat = (v * 2 - 1) * 90
-			local phi = math.rad(lat)
-
-			local thislondim = math.max(1, math.ceil(londim * math.cos(phi)))
-			for i=0,thislondim-1 do
-				local u = (i + .5) / thislondim
-				local lon = (u * 2 - 1) * 180
-				local lambda = math.rad(lon)
-
-				-- TODO move basis calculation to GPU and calculate the texcoords from instanced geometry?  would that be any faster?
-				local ex, ey, ez = chart:basis(phi, lambda, height)
-				for _,q in ipairs(arrow) do
-					texcoords:insert(u)
-					texcoords:insert(v)
-
-					exs:insert(ex.x)
-					exs:insert(ex.y)
-					exs:insert(ex.z)
-
-					eys:insert(ey.x)
-					eys:insert(ey.y)
-					eys:insert(ey.z)
-
-					ezs:insert(ez.x)
-					ezs:insert(ez.y)
-					ezs:insert(ez.z)
-
-					vertexes:insert(q[1])
-					vertexes:insert(q[2])
-				end
-			end
-		end
-
-		chart.arrowFieldSceneObj = GLSceneObject{
-			program = app.vectorFieldShader,
-			vertexes = { data = vertexes, dim = 2, },
-			geometry = { mode = gl.GL_LINES, },
-			texs = {
-				--[[ basis using textures
-				chart.basisTex:bind()
-				--]]
-				--[[ B coeffs using textures
-				BTex:bind()
-				--]]
-			},
-			attrs = {
-				texcoord = { buffer = { data = texcoords, dim = 2, } },
-				ex = { buffer = { data = exs, dim = 3, } },
-				ey = { buffer = { data = eys, dim = 3, } },
-				ez = { buffer = { data = ezs, dim = 3, } },
-			},
-		}
-print('...done building arrow field')
-	end
-
-	chart.arrowFieldSceneObj.uniforms.dt = guivars.fieldDT
-	chart.arrowFieldSceneObj.uniforms.mvProjMat = app.view.mvProjMat.ptr
-	chart.arrowFieldSceneObj.uniforms.arrowScale = scale
-	chart.arrowFieldSceneObj.uniforms.fieldZScale = guivars.fieldZScale
-	chart.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
-	chart.arrowFieldSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
-	chart.arrowFieldSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
-	chart.arrowFieldSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
-	chart.arrowFieldSceneObj.uniforms.chartIs3D = chart.is3D or false
-	chart.arrowFieldSceneObj:draw()
-end
-
-function drawFieldLines(app, chart)
-	app.fieldLineSceneObj.uniforms.mvProjMat = app.view.mvProjMat.ptr
-	app.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
-	app.fieldLineSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
-	app.fieldLineSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
-	app.fieldLineSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
-	app.fieldLineSceneObj.uniforms.chartIs3D = chart.is3D or false
-	app.fieldLineSceneObj:draw()
-end
-
-
 function App:update(...)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
@@ -1719,10 +1686,25 @@ function App:update(...)
 --]]
 
 	if guivars.doDrawArrowField then
-		drawArrowField(self, chart)
+		self.arrowFieldSceneObj.uniforms.dt = guivars.fieldDT
+		self.arrowFieldSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		self.arrowFieldSceneObj.uniforms.arrowScale = guivars.arrowScale / BStat.mag.max
+		self.arrowFieldSceneObj.uniforms.fieldZScale = guivars.fieldZScale
+		self.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
+		self.arrowFieldSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
+		self.arrowFieldSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
+		self.arrowFieldSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
+		self.arrowFieldSceneObj.uniforms.chartIs3D = chart.is3D or false
+		self.arrowFieldSceneObj:draw()
 	end
 	if guivars.doDrawFieldLines then
-		drawFieldLines(self, chart)
+		self.fieldLineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		self.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
+		self.fieldLineSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
+		self.fieldLineSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
+		self.fieldLineSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
+		self.fieldLineSceneObj.uniforms.chartIs3D = chart.is3D or false
+		self.fieldLineSceneObj:draw()
 	end
 
 	-- why cull each side separately?
