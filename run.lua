@@ -1424,6 +1424,13 @@ void main() {
 		local latdim = 15
 		local height0 = 0
 
+--[[
+how to build the field lines on the GPU ...
+1) pick our seed locations / fill them in on the top row of a float tex
+2) run a 1 x n shader / fbo on each successive rows, integrate as we go ...
+3) copy the fbo tex to an array buffer, and use it as a bunch of line strip vertexes
+--]]
+
 		local vertexes = table()
 		local geometries = table()
 		-- try to draw magnetic field lines ...
@@ -1444,10 +1451,9 @@ void main() {
 					local lambda = lambda0
 					local height = height0
 
-					local indexes = table()
+					local indexStart = #vertexes / 4
 
 --DEBUG:assert(#vertexes % 4 == 0)
-					indexes:insert(#vertexes / 4)
 					vertexes:insert(phi)
 					vertexes:insert(lambda)
 					vertexes:insert(height)
@@ -1479,7 +1485,6 @@ void main() {
 
 						-- TODO color by Bmag ...
 --DEBUG:assert(#vertexes % 4 == 0)
-						indexes:insert(#vertexes / 4)
 						vertexes:insert(phi)
 						vertexes:insert(lambda)
 						vertexes:insert(height)
@@ -1492,6 +1497,7 @@ void main() {
 						vertexes:insert(Bmag)
 --DEBUG:assert(#vertexes % 4 == 0, '#vertexes '..#vertexes)
 					end
+					local indexEnd = #vertexes / 4
 
 					-- giving each geometry a different .vertexes array would remove the need for indicies
 					-- and on old webgl that would mean getting rid of a 65536 max vertex limit
@@ -1501,9 +1507,8 @@ void main() {
 					-- ... or not, that'd have to be an explicit separate case, since it requires a single vertexes to be bound.
 					geometries:insert{
 						mode = gl.GL_LINE_STRIP,
-						indexes = {
-							data = indexes,
-						},
+						count = indexEnd - indexStart,
+						offset = indexStart,
 					}
 				end
 			end
