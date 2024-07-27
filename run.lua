@@ -2,6 +2,7 @@
 local cmdline = require 'ext.cmdline'(...)
 local assertindex = require 'ext.assert'.index
 local math = require 'ext.math'	-- isfinite
+local timer = require 'ext.timer'
 local gl = require 'gl.setup'(cmdline.gl or 'OpenGL')
 local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
@@ -661,13 +662,28 @@ function App:initGL(...)
 	self.unitProjMat = matrix_ffi({4,4}, 'float'):zeros():setOrtho(0, 1, 0, 1, -1, 1)
 	--self.unitProjMat = matrix_ffi({4,4}, 'float'):zeros():setOrtho(-1, 1, -1, 1, 1, -1)	-- identity matrix
 
-	do
-		print'generating B field...'
+	local londim = 1440
+	local latdim = 720
+	
+	local fbo = GLFBO()
+		:unbind()
+glreport'here'
 
+	local quadGeomVertexCode = [[
+layout(location=0) in vec2 vertex;
+out vec2 texcoordv;
+uniform mat4 mvProjMat;
+void main() {
+	texcoordv = vertex;
+	gl_Position = mvProjMat * vec4(vertex, 0., 1.);
+}
+]]
+
+	local BData = ffi.new('vec4f_t[?]', londim * latdim)
+	local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
+	timer('generating B field', function()
 		-- can be arbitrary
 		-- but the WMM model is for 15 mins, so [360,180] x4
-		londim = 1440
-		latdim = 720
 
 		-- while we're here, generate the basis tex
 		-- i've only got a script implementation for it for now
@@ -716,20 +732,6 @@ print"...done calculating basis"
 glreport'here'
 --]]
 
-		local fbo = GLFBO()
-			:unbind()
-glreport'here'
-
-		local quadGeomVertexCode = [[
-layout(location=0) in vec2 vertex;
-out vec2 texcoordv;
-uniform mat4 mvProjMat;
-void main() {
-	texcoordv = vertex;
-	gl_Position = mvProjMat * vec4(vertex, 0., 1.);
-}
-]]
-
 		local calcBShader = GLProgram{
 			version = 'latest',
 			precision = 'best',
@@ -776,7 +778,6 @@ glreport'here'
 		}
 
 		-- BData / B2Data is only used for stat computation
-		local BData = ffi.new('vec4f_t[?]', londim * latdim)
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			dest = BTex,
@@ -792,6 +793,7 @@ glreport'here'
 			:generateMipmap()
 			:unbind()
 glreport'here'
+	end)
 
 --[[
 		for j=0,latdim-1 do
@@ -809,8 +811,7 @@ glreport'here'
 
 -- [=[ hmm, better way than copy paste?
 
-		print'generating div B and curl B...'
-
+	timer('generating div B and curl B', function()
 		local calcB2Shader = GLProgram{
 			version = 'latest',
 			precision = 'best',
@@ -892,7 +893,6 @@ glreport'here'
 		}
 
 		-- only used for stat calc
-		local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
 		fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			dest = B2Tex,
@@ -907,7 +907,9 @@ glreport'here'
 		B2Tex:bind()
 			:generateMipmap()
 			:unbind()
+	end)
 
+	timer('generating stats', function()
 		local statgens = table{
 			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) end,	-- not :length() since it's vec4...
 			function(B, B2) return B.x end,
@@ -933,9 +935,10 @@ glreport'here'
 				)
 			end
 		end
-
+		
 		print('BStat')
 		print(BStat)
+	end)
 
 --[==[	-- plotting the bins
 		local Bin = require 'stat.bin'
@@ -974,14 +977,13 @@ glreport'here'
 		end
 --]==]
 
-		-- clamp in the min/max to 3 stddev
-		for i=1,#BStat do
-			local stat = BStat[i]
-			stat.min = math.max(stat.min, stat.avg - 3*stat.stddev)
-			stat.max = math.min(stat.max, stat.avg + 3*stat.stddev)
-		end
---]=]
+	-- clamp in the min/max to 3 stddev
+	for i=1,#BStat do
+		local stat = BStat[i]
+		stat.min = math.max(stat.min, stat.avg - 3*stat.stddev)
+		stat.max = math.min(stat.max, stat.avg + 3*stat.stddev)
 	end
+--]=]
 
 	glreport'here'
 
@@ -1185,8 +1187,7 @@ void main() {
 		},
 	}
 
-	do
-print('building arrow field')
+	timer('building arrow field', function()
 		local height = 0
 		local londim = 60
 		local latdim = 30
@@ -1405,11 +1406,9 @@ void main() {
 				texcoord = { buffer = { data = texcoords, dim = 2, } },
 			},
 		}
-print('...done building arrow field')
-	end
+	end)
 
-	print('building field lines...')
-	do
+	timer('building field lines', function()
 		local fieldLineShader = GLProgram{
 			version = 'latest',
 			precision = 'best',
@@ -1554,8 +1553,7 @@ void main() {
 			},
 			geometries = geometries,
 		}
-	end
-	print('...done building field lines')
+	end)
 
 	--gl.glEnable(gl.GL_CULL_FACE)
 	gl.glEnable(gl.GL_DEPTH_TEST)
