@@ -371,7 +371,7 @@ local guivars = {
 	gradientIndex = 1,
 
 	drawAlpha = 1,
-	doDrawVectorField = true,
+	doDrawArrowField = true,
 	doDrawFieldLines = true,
 
 	fieldDT = 0,
@@ -1341,13 +1341,39 @@ void main() {
 	self.fieldLineShader = GLProgram{
 		version = 'latest',
 		precision = 'best',
-		vertexCode = [[
+		vertexCode = chartCode..template([[
+<? for _,name in ipairs(chartCNames) do
+?>uniform float weight_<?=name?>;
+<? end
+?>
+uniform bool chartIs3D;
+
+//vertex = (phi (rad), lambda (rad), height (meters))
 layout(location=0) in vec3 vertex;
+
 uniform mat4 mvProjMat;
 void main() {
-	gl_Position = mvProjMat * vec4(vertex, 1.);
+	vec3 latLonHeight = vec3(
+		vertex.xy * (180. / M_PI),
+		vertex.z);
+
+	vec3 pos = 0.
+<? for _,name in ipairs(chartCNames) do
+?>		+ weight_<?=name?> * chart_<?=name?>(latLonHeight)
+<? end
+?>	;
+	//from meters to normalized coordinates
+	pos /= WGS84_a;
+
+	if (chartIs3D) {
+		pos = vec3(pos.z, pos.x, pos.y);
+	}
+
+	gl_Position = mvProjMat * vec4(pos, 1.);
 }
-]],
+]],		{
+			chartCNames = chartCNames,
+		}),
 		fragmentCode = [[
 out vec4 fragColor;
 void main() {
@@ -1356,7 +1382,110 @@ void main() {
 ]],
 	}:useNone()
 
-	gl.glEnable(gl.GL_CULL_FACE)
+	print('building field lines...')
+	do
+		local londim = 30
+		local latdim = 15
+		local height0 = 0
+
+		local wgs84_a_in_m = wgs84.a * 1e+3
+
+		local vertexes = table()
+		local geometries = table()
+		-- try to draw magnetic field lines ...
+		for j=0,latdim-1 do
+			local v = (j + .5) / latdim
+			local lat = (v * 2 - 1) * 90
+			local phi0 = math.rad(lat)
+
+			--local thislondim = math.max(1, math.ceil(londim * math.cos(phi0)))
+			local thislondim = londim
+			for i=0,thislondim-1 do
+				local u = (i + .5) / thislondim
+				local lon = (u * 2 - 1) * 180
+				local lambda0 = math.rad(lon)
+
+				for sign=-1,1,2 do
+
+					local phi = phi0
+					local lambda = lambda0
+					local height = height0
+
+					local indexes = table()
+
+-- [=[ just use cartesian
+					indexes:insert(#vertexes / 3)
+					vertexes:insert(phi)
+					vertexes:insert(lambda)
+					vertexes:insert(height)
+
+					local cx, cy, cz = charts.WGS84:chart(phi, lambda, height)
+
+--[[
+local checkphi, checklambda, checkheight = cartesianToLatLonWGS84(cx, cy, cz)
+local checkdphi = math.abs(phi - checkphi)
+local checkdlambda = math.abs(lambda - checklambda)
+local checkdheight = math.abs(height - checkheight)
+if checkdphi > 1e-4 or checkdlambda > 1e-4 or checkdheight > 1e-4 then
+print('plh', phi, checkphi, lambda, checklambda, height, checkheight)
+end
+
+local checkx, checky, checkz = charts.WGS84:chart(checkphi, checklambda, checkheight)
+local checkdx = math.abs(cx - checkx)
+local checkdy = math.abs(cy - checky)
+local checkdz = math.abs(cz - checkz)
+if checkdx > 1e-4 or checkdy > 1e-4 or checkdz > 1e-4 then
+print('xyz', cx, checkx, cy, checky, cz, checkz)
+end
+--]]
+--print()
+					for k=1,200 do
+						local dparam = sign * 1e-2
+						local ex, ey, ez = charts.WGS84:basis(phi, lambda, height)
+						local Bx, By, Bz = calcB(phi, lambda, height)
+						--local dv = Bx * ex + By * ey + Bz * ez
+						local dv = vec3f(
+							Bx * ex.x + By * ey.x + Bz * ez.x,
+							Bx * ex.y + By * ey.y + Bz * ez.y,
+							Bx * ex.z + By * ey.z + Bz * ez.z)
+						--local BmagSq = Bx^2 + By^2 + Bz^2
+						--if BmagSq < 100 then break end
+						local n = dv:normalize() * dparam
+						cx = cx + n.x
+						cy = cy + n.y
+						cz = cz + n.z
+						local rSq = cx*cx + cy*cy + cz*cz
+						if rSq < .1 then break end
+						phi, lambda, height = cartesianToLatLonWGS84(cx, cy, cz)
+
+						indexes:insert(#vertexes / 3)
+						vertexes:insert(phi)
+						vertexes:insert(lambda)
+						vertexes:insert(height)
+					end
+--]=]
+
+					geometries:insert{
+						mode = gl.GL_LINE_STRIP,
+						indexes = {
+							data = indexes,
+						},
+					}
+				end
+			end
+		end
+		self.fieldLineSceneObj = GLSceneObject{
+			program = self.fieldLineShader,
+			vertexes = {
+				data = vertexes,
+				dim = 3,
+			},
+			geometries = geometries,
+		}
+	end
+	print('...done building field lines')
+
+	--gl.glEnable(gl.GL_CULL_FACE)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 	gl.glEnable(gl.GL_BLEND)
 	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -1462,7 +1591,7 @@ local function drawReading(info)
 end
 --]=]
 
-local function drawVectorField(app, chart)
+local function drawArrowField(app, chart)
 	local height = 0
 	local londim = 60
 	local latdim = 30
@@ -1555,173 +1684,13 @@ print('...done building arrow field')
 end
 
 function drawFieldLines(app, chart)
-	local londim = 30
-	local latdim = 15
-	local height0 = 0
-
-	local wgs84_a_in_m = wgs84.a * 1e+3
-
-	if not chart.fieldLineSceneObj then
-		print('building field lines for '..chart.name)
-
-		local vertexes = table()
-		local geometries = table()
-		-- try to draw magnetic field lines ...
-		for j=0,latdim-1 do
-			local v = (j + .5) / latdim
-			local lat = (v * 2 - 1) * 90
-			local phi0 = math.rad(lat)
-
-			--local thislondim = math.max(1, math.ceil(londim * math.cos(phi0)))
-			local thislondim = londim
-			for i=0,thislondim-1 do
-				local u = (i + .5) / thislondim
-				local lon = (u * 2 - 1) * 180
-				local lambda0 = math.rad(lon)
-
-				for sign=-1,1,2 do
-
-					local phi = phi0
-					local lambda = lambda0
-					local height = height0
-
-					local indexes = table()
-
---[=[ trying to integrate in phi,lambda,height space ...
-					-- this is in earth rad units ...
-					local x, y, z = chart:chart(phi, lambda, height)
-					indexes:insert(#vertexes / 3)
-					vertexes:insert(x)
-					vertexes:insert(y)
-					vertexes:insert(z)
-
-					for k=1,200 do
-						-- B field in north, east, downward components ...
-						local Bx, By, Bz = calcB(phi, lambda, height)
-
-						--local dparam = .015 * wgs84_a_in_m
-						local dparam = .015
-
-						local Bmag = math.sqrt(Bx*Bx + By*By + Bz*Bz)
-						local invBmag = 1 / Bmag
-
-						local truex, truey, truez = charts.WGS84:chart(phi, lambda, height) -- in units of wgs84 a
---						truex = truex * wgs84_a_in_m		-- now in meters
---						truey = truey * wgs84_a_in_m		-- now in meters
---						truez = truez * wgs84_a_in_m		-- now in meters
-
-						local r = math.sqrt(truex^2 + truey^2 + truez^2)		-- radial distance in meters
-						r = r * wgs84_a_in_m	-- in meters
-						if r < 100000 then break end
-
-						-- |e_h| = 1
-						-- height is in meters upwards (so sign flip), B = ∂r/∂t is already in meters height is in meters
-						--local dheight = -sign * dparam * Bz * invBmag -- * (wgs84_a_in_m)
-						-- ... scale all up by r cos(phi) ...
-						local dheight = -sign * dparam * Bz * invBmag * r * math.cos(phi) -- * (wgs84_a_in_m)
-
-						-- phi is in radians, so convert our B = ∂r/∂t from meters to radians: divide it by the radial value
-						-- |e_φ| = spherical |e_(π/2 - θ)| = r
-						--local dphi = sign * dparam * Bx * invBmag / r
-						-- ... scale all up by r cos(phi) ...
-						local dphi = sign * dparam * Bx * invBmag * math.cos(phi)
-
-						-- |e_λ| = spherical |e_φ| = spherical r sin(θ) = r cos(φ)
-						--local dlambda = sign * dparam * By * invBmag / (r * math.cos(phi))
-						-- ... scale all up by r cos(phi) ...
-						local dlambda = sign * dparam * By * invBmag
-
-						phi = phi + dphi
-						lambda = lambda + dlambda
-						height = height + dheight
-
-						--phi = ((phi + math.pi / 2) % math.pi) - math.pi / 2
-						--lambda = ((lambda + math.pi) % (2 * math.pi)) - math.pi
-
-						x, y, z = chart:chart(phi, lambda, height)
-						indexes:insert(#vertexes / 3)
-						vertexes:insert(x)
-						vertexes:insert(y)
-						vertexes:insert(z)
-					end
---]=]
--- [=[ just use cartesian
-
-					local x, y, z = chart:chart(phi, lambda, height)
-					indexes:insert(#vertexes / 3)
-					vertexes:insert(x)
-					vertexes:insert(y)
-					vertexes:insert(z)
-
-					local cx, cy, cz = charts.WGS84:chart(phi, lambda, height)
-
---[[
-local checkphi, checklambda, checkheight = cartesianToLatLonWGS84(cx, cy, cz)
-local checkdphi = math.abs(phi - checkphi)
-local checkdlambda = math.abs(lambda - checklambda)
-local checkdheight = math.abs(height - checkheight)
-if checkdphi > 1e-4 or checkdlambda > 1e-4 or checkdheight > 1e-4 then
-print('plh', phi, checkphi, lambda, checklambda, height, checkheight)
-end
-
-local checkx, checky, checkz = charts.WGS84:chart(checkphi, checklambda, checkheight)
-local checkdx = math.abs(cx - checkx)
-local checkdy = math.abs(cy - checky)
-local checkdz = math.abs(cz - checkz)
-if checkdx > 1e-4 or checkdy > 1e-4 or checkdz > 1e-4 then
-print('xyz', cx, checkx, cy, checky, cz, checkz)
-end
---]]
---print()
-					for k=1,200 do
-						local dparam = 1e-2
-						local ex, ey, ez = charts.WGS84:basis(phi, lambda, height)
-						local Bx, By, Bz = calcB(phi, lambda, height)
-						--local dv = Bx * ex + By * ey + Bz * ez
-						local dv = vec3f(
-							Bx * ex.x + By * ey.x + Bz * ez.x,
-							Bx * ex.y + By * ey.y + Bz * ez.y,
-							Bx * ex.z + By * ey.z + Bz * ez.z)
-						--local BmagSq = Bx^2 + By^2 + Bz^2
-						--if BmagSq < 100 then break end
-						local n = dv:normalize() * dparam
---print(phi, lambda, height, ex, ey, ez, Bx, By, Bz, dv, n)
---print(cx, cy, cz, n)
-						cx = cx + n.x
-						cy = cy + n.y
-						cz = cz + n.z
-						phi, lambda, height = cartesianToLatLonWGS84(cx, cy, cz)
-
-						indexes:insert(#vertexes / 3)
-						local x, y, z = chart:chart(phi, lambda, height)
-						if not math.isfinite(x) or not math.isfinite(y) or not math.isfinite(z) then break end
-						vertexes:insert(x)
-						vertexes:insert(y)
-						vertexes:insert(z)
-					end
---]=]
-
-					geometries:insert{
-						mode = gl.GL_LINE_STRIP,
-						indexes = {
-							data = indexes,
-						},
-					}
-				end
-			end
-		end
-		chart.fieldLineSceneObj = GLSceneObject{
-			program = app.fieldLineShader,
-			vertexes = {
-				data = vertexes,
-				dim = 3,
-			},
-			geometries = geometries,
-		}
-	end
-
-	chart.fieldLineSceneObj.uniforms.mvProjMat = app.view.mvProjMat.ptr
-	chart.fieldLineSceneObj:draw()
+	app.fieldLineSceneObj.uniforms.mvProjMat = app.view.mvProjMat.ptr
+	app.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
+	app.fieldLineSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
+	app.fieldLineSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
+	app.fieldLineSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
+	app.fieldLineSceneObj.uniforms.chartIs3D = chart.is3D or false
+	app.fieldLineSceneObj:draw()
 end
 
 
@@ -1749,17 +1718,18 @@ function App:update(...)
 	}
 --]]
 
-	if guivars.doDrawVectorField then
-		drawVectorField(self, chart)
+	if guivars.doDrawArrowField then
+		drawArrowField(self, chart)
 	end
 	if guivars.doDrawFieldLines then
 		drawFieldLines(self, chart)
 	end
 
-	gl.glCullFace(gl.GL_FRONT)
+	-- why cull each side separately?
+	--gl.glCullFace(gl.GL_FRONT)
 	chart:draw(self, shader, gradtex)
-	gl.glCullFace(gl.GL_BACK)
-	chart:draw(self, shader, gradtex)
+	--gl.glCullFace(gl.GL_BACK)
+	--chart:draw(self, shader, gradtex)
 
 	glreport'here'
 
@@ -1783,7 +1753,7 @@ function App:updateGUI()
 
 
 	ig.luatableCheckbox('ortho', self.view, 'ortho')
-	ig.luatableCheckbox('draw vector field', guivars, 'doDrawVectorField')
+	ig.luatableCheckbox('draw arrow field', guivars, 'doDrawArrowField')
 	ig.luatableCheckbox('draw field lines', guivars, 'doDrawFieldLines')
 
 	ig.igText'chart'
