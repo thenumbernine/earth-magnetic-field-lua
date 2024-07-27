@@ -386,6 +386,7 @@ local guivars = {
 	arrowScale = 5,
 	-- set to 0 to flatten vector field against surface
 	arrowZScale = 1,
+	arrowFieldNormalize = false,
 
 	gradScale = 1,
 }
@@ -1215,6 +1216,7 @@ uniform float arrowLonDim;
 uniform float arrowEvenDistribute;
 uniform float arrowScale;
 uniform float arrowZScale;
+uniform bool arrowFieldNormalize;
 
 float lenSq(vec3 v) {
 	return dot(v, v);
@@ -1310,17 +1312,31 @@ void main() {
 	vec3 ey = normalize(e[1]);
 	vec3 ez = normalize(e[2]);
 
+	// do this before normalizing
+	BCoeffs.z *= arrowZScale;
+
+	//should this normalize after applying scales/basis or before?
+	// before, so the scales can do something
+	if (arrowFieldNormalize) {
+		BCoeffs = normalize(BCoeffs);
+	}
+
+	// TODO the scale still has the B field min/max baked into it,
+	// so if you click 'normalize' then you have to manually scale up to counter that
+	// TODO don't do that.
+
 	vec3 B = (arrowScale / arrowLatDim) * (
 		  ex * BCoeffs.x
 		+ ey * BCoeffs.y
-		+ ez * (BCoeffs.z * arrowZScale)
+		+ ez * BCoeffs.z
 	);
+
 	//vec3 Bey = perpTo(B);			// cross with furthest axis
 	//vec3 Bey = vec3(-B.y, B.x, 0.);	// cross with z axis
 	vec3 Bey = (arrowScale / arrowLatDim) * (
 		  ey * BCoeffs.x
 		- ex * BCoeffs.y
-		+ ez * (BCoeffs.z * arrowZScale)
+		+ ez * BCoeffs.z
 	);
 
 	gl_Position = mvProjMat * vec4(
@@ -1420,9 +1436,10 @@ void main() {
 			},
 		}:useNone()
 
-		local londim = 30
-		local latdim = 15
-		local height0 = 0
+		local londim = 30	-- field line lon dim
+		local latdim = 15	-- field line lat dim
+		local evenDistribute = false	-- field line even distribute
+		local height0 = 0	-- field line initial height
 
 --[[
 how to build the field lines on the GPU ...
@@ -1431,88 +1448,102 @@ how to build the field lines on the GPU ...
 3) copy the fbo tex to an array buffer, and use it as a bunch of line strip vertexes
 --]]
 
-		local vertexes = table()
-		local geometries = table()
+		local startCoords = vector'vec4f_t'
 		-- try to draw magnetic field lines ...
 		for j=0,latdim-1 do
 			local v = (j + .5) / latdim
 			local lat = (v * 2 - 1) * 90
-			local phi0 = math.rad(lat)
+			local phi = math.rad(lat)
 
-			--local thislondim = math.max(1, math.ceil(londim * math.cos(phi0)))
-			local thislondim = londim
+			local thislondim = evenDistribute
+				and math.max(1, math.ceil(londim * math.cos(phi)))
+				or londim
 			for i=0,thislondim-1 do
 				local u = (i + .5) / thislondim
 				local lon = (u * 2 - 1) * 180
-				local lambda0 = math.rad(lon)
+				local lambda = math.rad(lon)
+
+				-- TODO Bmag on the GPU would be nice ...
+				local Bx, By, Bz = calcB(phi, lambda, height0)
+				local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
 
 				for sign=-1,1,2 do
-					local phi = phi0
-					local lambda = lambda0
-					local height = height0
-
-					local indexStart = #vertexes / 4
-
---DEBUG:assert(#vertexes % 4 == 0)
-					vertexes:insert(phi)
-					vertexes:insert(lambda)
-					vertexes:insert(height)
---DEBUG:assert(#vertexes % 4 == 3)
-
-					local cx, cy, cz = charts.WGS84:chart(phi, lambda, height)
-					for k=1,400 do
---DEBUG:assert(#vertexes % 4 == 3)
-						local dparam = sign * 1e-2
-						local ex, ey, ez = charts.WGS84:basis(phi, lambda, height)
-						local Bx, By, Bz = calcB(phi, lambda, height)
-						local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
-						vertexes:insert(Bmag)
---DEBUG:assert(#vertexes % 4 == 0)
-
-						--local dv = Bx * ex + By * ey + Bz * ez
-						local dv = vec3f(
-							Bx * ex.x + By * ey.x + Bz * ez.x,
-							Bx * ex.y + By * ey.y + Bz * ez.y,
-							Bx * ex.z + By * ey.z + Bz * ez.z)
-						--if BmagSq < 100 then break end
-						local n = dv:normalize() * dparam
-						cx = cx + n.x
-						cy = cy + n.y
-						cz = cz + n.z
-						local rSq = cx*cx + cy*cy + cz*cz
-						if rSq < .02 then break end
-						phi, lambda, height = cartesianToLatLonWGS84(cx, cy, cz)
-
-						-- TODO color by Bmag ...
---DEBUG:assert(#vertexes % 4 == 0)
-						vertexes:insert(phi)
-						vertexes:insert(lambda)
-						vertexes:insert(height)
---DEBUG:assert(#vertexes % 4 == 3)
-					end
-					if #vertexes % 4 == 3 then
-						local Bx, By, Bz = calcB(phi, lambda, height)
-						local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
---DEBUG:assert(#vertexes % 4 == 3)
-						vertexes:insert(Bmag)
---DEBUG:assert(#vertexes % 4 == 0, '#vertexes '..#vertexes)
-					end
-					local indexEnd = #vertexes / 4
-
-					-- giving each geometry a different .vertexes array would remove the need for indicies
-					-- and on old webgl that would mean getting rid of a 65536 max vertex limit
-					-- but that'd mean changing sceneobject to rebind the 'vertexes' attribute each time the geometry changes
-					-- which maybe I should do since the .geometries field is new
-					-- and this design could still benefit from glMultiDrawArrays ...
-					-- ... or not, that'd have to be an explicit separate case, since it requires a single vertexes to be bound.
-					geometries:insert{
-						mode = gl.GL_LINE_STRIP,
-						count = indexEnd - indexStart,
-						offset = indexStart,
-					}
+					-- assert here that every other startCoords is going to integrate + - + - ...
+					startCoords:emplace_back()[0]:set(phi, lambda, height0, Bmag)
 				end
 			end
 		end
+
+
+		local vertexes = table()
+		local geometries = table()
+
+		for startIndex=0,#startCoords-1 do
+			local startCoord = startCoords.v[startIndex]
+			local phi, lambda, height = startCoord:unpack()
+			local sign = bit.band(startIndex, 1) * 2 - 1
+
+			local indexStart = #vertexes / 4
+
+--DEBUG:assert(#vertexes % 4 == 0)
+			vertexes:insert(phi)
+			vertexes:insert(lambda)
+			vertexes:insert(height)
+--DEBUG:assert(#vertexes % 4 == 3)
+
+			local cx, cy, cz = charts.WGS84:chart(phi, lambda, height)
+			for k=1,400 do
+--DEBUG:assert(#vertexes % 4 == 3)
+				local dparam = sign * 1e-2
+				local ex, ey, ez = charts.WGS84:basis(phi, lambda, height)
+				local Bx, By, Bz = calcB(phi, lambda, height)
+				local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
+				vertexes:insert(Bmag)
+--DEBUG:assert(#vertexes % 4 == 0)
+
+				--local dv = Bx * ex + By * ey + Bz * ez
+				local dv = vec3f(
+					Bx * ex.x + By * ey.x + Bz * ez.x,
+					Bx * ex.y + By * ey.y + Bz * ez.y,
+					Bx * ex.z + By * ey.z + Bz * ez.z)
+				--if BmagSq < 100 then break end
+				local n = dv:normalize() * dparam
+				cx = cx + n.x
+				cy = cy + n.y
+				cz = cz + n.z
+				local rSq = cx*cx + cy*cy + cz*cz
+				if rSq < .02 then break end
+				phi, lambda, height = cartesianToLatLonWGS84(cx, cy, cz)
+
+				-- TODO color by Bmag ...
+--DEBUG:assert(#vertexes % 4 == 0)
+				vertexes:insert(phi)
+				vertexes:insert(lambda)
+				vertexes:insert(height)
+--DEBUG:assert(#vertexes % 4 == 3)
+			end
+			if #vertexes % 4 == 3 then
+				local Bx, By, Bz = calcB(phi, lambda, height)
+				local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
+--DEBUG:assert(#vertexes % 4 == 3)
+				vertexes:insert(Bmag)
+--DEBUG:assert(#vertexes % 4 == 0, '#vertexes '..#vertexes)
+			end
+			local indexEnd = #vertexes / 4
+
+			-- giving each geometry a different .vertexes array would remove the need for indicies
+			-- and on old webgl that would mean getting rid of a 65536 max vertex limit
+			-- but that'd mean changing sceneobject to rebind the 'vertexes' attribute each time the geometry changes
+			-- which maybe I should do since the .geometries field is new
+			-- and this design could still benefit from glMultiDrawArrays ...
+			-- ... or not, that'd have to be an explicit separate case, since it requires a single vertexes to be bound.
+			geometries:insert{
+				mode = gl.GL_LINE_STRIP,
+				count = indexEnd - indexStart,
+				offset = indexStart,
+			}
+		end
+
 		self.fieldLineSceneObj = GLSceneObject{
 			program = fieldLineShader,
 			vertexes = {
@@ -1703,6 +1734,7 @@ function App:update(...)
 		self.arrowFieldSceneObj.uniforms.dt = guivars.fieldDT
 		self.arrowFieldSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		self.arrowFieldSceneObj.uniforms.arrowZScale = guivars.arrowZScale
+		self.arrowFieldSceneObj.uniforms.arrowFieldNormalize = guivars.arrowFieldNormalize
 		self.arrowFieldSceneObj.uniforms.arrowHeight = guivars.arrowHeight
 		self.arrowFieldSceneObj.uniforms.arrowLatDim = guivars.arrowLatDim
 		self.arrowFieldSceneObj.uniforms.arrowLonDim = guivars.arrowLonDim
@@ -1794,6 +1826,7 @@ function App:updateGUI()
 	ig.luatableInputFloat('arrow altitude', guivars, 'arrowHeight')
 	ig.luatableInputFloat('arrow scale', guivars, 'arrowScale')
 	ig.luatableInputFloat('arrow z scale', guivars, 'arrowZScale')
+	ig.luatableCheckbox('arrow field normalize', guivars, 'arrowFieldNormalize')
 
 	if ig.luatableInputInt('arrow lat dim', guivars, 'arrowLatDim')
 	or ig.luatableInputInt('arrow lon dim', guivars, 'arrowLonDim')
