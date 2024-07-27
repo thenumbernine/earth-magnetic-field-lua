@@ -379,11 +379,13 @@ local guivars = {
 
 	fieldDT = 0,
 
-
-	-- set to 0 to flatten vector field against surface
-	fieldZScale = 1,
-
+	arrowHeight = 0,
+	arrowLatDim = 30,
+	arrowLonDim = 60,
+	arrowEvenDistribute = true,
 	arrowScale = 5,
+	-- set to 0 to flatten vector field against surface
+	arrowZScale = 1,
 
 	gradScale = 1,
 }
@@ -666,7 +668,7 @@ function App:initGL(...)
 
 	local londim = 1440
 	local latdim = 720
-	
+
 	local fbo = GLFBO()
 		:unbind()
 glreport'here'
@@ -937,7 +939,7 @@ glreport'here'
 				)
 			end
 		end
-		
+
 		print('BStat')
 		print(BStat)
 	end)
@@ -1117,14 +1119,12 @@ void main() {
 		}:useNone()
 	end
 
-	if self.view then
-		self.view.ortho = true
-		self.view.pos.z = 2
-		self.view.orthoSize = 2
-	end
+	self.view.ortho = true
+	self.view.pos.z = 2
+	self.view.orthoSize = 2
 	gl.glClearColor(0,0,0,0)
 
-
+--[=[
 	self.pointSceneObj = GLSceneObject{
 		program = {
 			version = 'latest',
@@ -1188,13 +1188,9 @@ void main() {
 			mode = gl.GL_LINES,
 		},
 	}
+--]=]
 
 	timer('building arrow field', function()
-		local height = 0
-		local londim = 60
-		local latdim = 30
-		local baseScale = 1 / latdim
-
 		local arrowFieldShader = GLProgram{
 			version = 'latest',
 			precision = 'best',
@@ -1212,21 +1208,13 @@ uniform bool chartIs3D;
 
 layout(location=0) in vec2 vertex;
 
-out vec3 colorv;
-
 uniform mat4 mvProjMat;
+uniform float arrowHeight;
+uniform float arrowLatDim;
+uniform float arrowLonDim;
+uniform float arrowEvenDistribute;
 uniform float arrowScale;
-uniform float fieldZScale;
-
-#if 0	//basis from texture
-uniform sampler2D basisTex;
-#elif 0	//basis from attribs
-in vec3 ex, ey, ez;
-#endif
-
-#if 0	// B coeffs using textures
-uniform sampler2D BTex;
-#endif
+uniform float arrowZScale;
 
 float lenSq(vec3 v) {
 	return dot(v, v);
@@ -1273,22 +1261,23 @@ vec3 zAxis(vec4 q) {
 		1. - 2. * (q.x * q.x + q.y * q.y));
 }
 
-in float instanceID;
-uniform float arrowTexSize;
+uniform int arrowTexSize;
 uniform sampler2D arrowCoordTex;
 
 void main() {
 	vec2 arrowTexTC;
-	arrowTexTC.x = mod(instanceID, arrowTexSize);						// integer in x direction
-	arrowTexTC.y = (instanceID - arrowTexTC.x + .01) / arrowTexSize;	// integer in y direction
+	int iarrowTexTCX = gl_InstanceID % arrowTexSize;
+	int iarrowTexTCY = (gl_InstanceID - iarrowTexTCX) / arrowTexSize;
+	arrowTexTC.x = float(iarrowTexTCX);	// integer in x direction
+	arrowTexTC.y = float(iarrowTexTCY);	// integer in y direction
 	arrowTexTC += .5;
-	arrowTexTC /= arrowTexSize;
+	arrowTexTC /= float(arrowTexSize);
 	vec2 texcoord = texture(arrowCoordTex, arrowTexTC).xy;
 
 	vec3 latLonHeight = vec3(
 		(texcoord.y - .5) * 180.,	// lat in deg
 		(texcoord.x - .5) * 360., 	// lon in deg
-		0.);						// height in m
+		arrowHeight);				// height in m
 
 	// expect vertex xyz to be lat lon height
 	// lat and lon is in degrees
@@ -1306,22 +1295,12 @@ void main() {
 		pos = vec3(pos.z, pos.x, pos.y);
 	}
 
-#if 0	// B coeffs using textures
-	vec3 BCoeffs = texture(BTex, texcoord).xyz;
-#elif 1	// on GPU
 	vec3 BCoeffs = calcB(vec3(
 		(texcoord.y - .5) * M_PI,			//phi
 		(texcoord.x - .5) * 2. * M_PI,		//lambda
 		0.
 	));
-#endif
 
-#if 0	//basis from texture ... seems very inaccurate ...
-	vec4 basisQuat = normalize(texture(basisTex, texcoord));
-	vec3 ex = xAxis(basisQuat);
-	vec3 ey = yAxis(basisQuat);
-	vec3 ez = zAxis(basisQuat);
-#else	//basis from glsl code
 	mat3 e = mat3(vec3(0.), vec3(0.), vec3(0.))
 <? for _,name in ipairs(chartCNames) do
 ?>		+ weight_<?=name?> * chart_<?=name?>_basis(latLonHeight)
@@ -1330,19 +1309,18 @@ void main() {
 	vec3 ex = normalize(e[0]);
 	vec3 ey = normalize(e[1]);
 	vec3 ez = normalize(e[2]);
-#endif
 
-	vec3 B = arrowScale * <?=clnumber(baseScale)?> * (
+	vec3 B = (arrowScale / arrowLatDim) * (
 		  ex * BCoeffs.x
 		+ ey * BCoeffs.y
-		+ ez * (BCoeffs.z * fieldZScale)
+		+ ez * (BCoeffs.z * arrowZScale)
 	);
 	//vec3 Bey = perpTo(B);			// cross with furthest axis
 	//vec3 Bey = vec3(-B.y, B.x, 0.);	// cross with z axis
-	vec3 Bey = arrowScale * <?=clnumber(baseScale)?> * (
+	vec3 Bey = (arrowScale / arrowLatDim) * (
 		  ey * BCoeffs.x
 		- ex * BCoeffs.y
-		+ ez * (BCoeffs.z * fieldZScale)
+		+ ez * (BCoeffs.z * arrowZScale)
 	);
 
 	gl_Position = mvProjMat * vec4(
@@ -1352,7 +1330,6 @@ void main() {
 }
 ]],
 			{
-				baseScale = baseScale,
 				clnumber = clnumber,
 				chartCNames = chartCNames,
 			}),
@@ -1362,86 +1339,30 @@ void main() {
 	fragColor = vec4(1., 1., 1., 1.);
 }
 ]],
-			uniforms = {
-				--basisTex = 0,
-				--BTex = 1,
-			},
 		}:useNone()
-
-		local arrow = {
-			{-.5, 0.},
-			{.5, 0.},
-			{.2, .3},
-			{.5, 0.},
-			{.2, -.3},
-			{.5, 0.},
-		}
-
-		local vertexes = table()
-		local instanceIDs = table()
-
-		local arrowCoords = vector'vec2f_t'
-		local id = 0
-		
-		for j=0,latdim-1 do
-			local v = (j + .5) / latdim
-			local lat = (v * 2 - 1) * 90
-			local phi = math.rad(lat)
-
-			local thislondim = math.max(1, math.ceil(londim * math.cos(phi)))
-			for i=0,thislondim-1 do
-				local u = (i + .5) / thislondim
-				local lon = (u * 2 - 1) * 180
-				local lambda = math.rad(lon)
-				arrowCoords:emplace_back()[0]:set(u, v)
-
-				for _,q in ipairs(arrow) do
-					instanceIDs:insert(id)
-
-					vertexes:insert(q[1])
-					vertexes:insert(q[2])
-				end
-				id = id + 1
-			end
-		end
-		local arrowTexSize = math.ceil(math.sqrt(#arrowCoords))
-		arrowCoords:reserve(arrowTexSize * arrowTexSize)
-
-		self.arrowCoordTex = GLTex2D{
-			internalFormat = gl.GL_RG32F,
-			width = arrowTexSize,
-			height = arrowTexSize,
-			format = gl.GL_RG,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-			data = arrowCoords.v,
-		}:unbind()
 
 		self.arrowFieldSceneObj = GLSceneObject{
 			program = arrowFieldShader,
-			vertexes = { data = vertexes, dim = 2, },
-			geometry = { mode = gl.GL_LINES, },
+			vertexes = {
+				data = {
+					-.5, 0,
+					.5, 0,
+					.2, .3,
+					.5, 0,
+					.2, -.3,
+					.5, 0,
+				},
+				dim = 2,
+			},
+			geometry = {
+				mode = gl.GL_LINES,
+			},
 			uniforms = {
 				arrowTexSize = arrowTexSize,
 			},
-			texs = {
-				self.arrowCoordTex,
-				--[[ basis using textures
-				chart.basisTex:bind()
-				--]]
-				--[[ B coeffs using textures
-				BTex:bind()
-				--]]
-			},
-			attrs = {
-				instanceID = { buffer = { data = instanceIDs, dim = 1, } },
-			},
 		}
+
+		self:updateArrowTex()	-- do this after self.arrowFieldSceneObj is made
 	end)
 
 	timer('building field lines', function()
@@ -1553,7 +1474,7 @@ void main() {
 						cy = cy + n.y
 						cz = cz + n.z
 						local rSq = cx*cx + cy*cy + cz*cz
-						if rSq < .1 then break end
+						if rSq < .02 then break end
 						phi, lambda, height = cartesianToLatLonWGS84(cx, cy, cz)
 
 						-- TODO color by Bmag ...
@@ -1576,7 +1497,7 @@ void main() {
 					-- and on old webgl that would mean getting rid of a 65536 max vertex limit
 					-- but that'd mean changing sceneobject to rebind the 'vertexes' attribute each time the geometry changes
 					-- which maybe I should do since the .geometries field is new
-					-- and this design could still benefit from glMultiDrawArrays ... 
+					-- and this design could still benefit from glMultiDrawArrays ...
 					-- ... or not, that'd have to be an explicit separate case, since it requires a single vertexes to be bound.
 					geometries:insert{
 						mode = gl.GL_LINE_STRIP,
@@ -1601,6 +1522,52 @@ void main() {
 	gl.glEnable(gl.GL_DEPTH_TEST)
 	gl.glEnable(gl.GL_BLEND)
 	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+end
+
+function App:updateArrowTex()
+	-- whenever lat/lon are resized, just rebuild this
+	-- technically you could even do it on the GPU as a GPU pass ...
+	-- just 1) unravel the texcoord to 1D index
+	-- then 2) ... well the inverse map of the sum of ceil(londim * cos(phi)) is a bit tricky ...
+	local arrowCoords = vector'vec2f_t'
+	local londim = guivars.arrowLonDim
+	local latdim = guivars.arrowLatDim
+	for j=0,latdim-1 do
+		local v = (j + .5) / latdim
+		local lat = (v * 2 - 1) * 90
+		local phi = math.rad(lat)
+
+		local thislondim = guivars.arrowEvenDistribute
+			and math.max(1, math.ceil(londim * math.cos(phi)))
+			or londim
+		for i=0,thislondim-1 do
+			local u = (i + .5) / thislondim
+			local lon = (u * 2 - 1) * 180
+			local lambda = math.rad(lon)
+			arrowCoords:emplace_back()[0]:set(u, v)
+		end
+	end
+	local arrowTexSize = math.ceil(math.sqrt(#arrowCoords))
+	arrowCoords:reserve(arrowTexSize * arrowTexSize)
+
+	local arrowCoordTex = GLTex2D{
+		internalFormat = gl.GL_RG32F,
+		width = arrowTexSize,
+		height = arrowTexSize,
+		format = gl.GL_RG,
+		type = gl.GL_FLOAT,
+		minFilter = gl.GL_NEAREST,
+		magFilter = gl.GL_NEAREST,
+		wrap = {
+			s = gl.GL_REPEAT,
+			t = gl.GL_REPEAT,
+		},
+		data = arrowCoords.v,
+	}:unbind()
+
+	self.arrowFieldSceneObj.geometry.instanceCount = #arrowCoords
+	self.arrowFieldSceneObj.uniforms.arrowTexSize = arrowTexSize
+	self.arrowFieldSceneObj.texs[1] = arrowCoordTex
 end
 
 local function degmintofrac(deg, min, sec)
@@ -1730,29 +1697,33 @@ function App:update(...)
 	if guivars.doDrawArrowField then
 		self.arrowFieldSceneObj.uniforms.dt = guivars.fieldDT
 		self.arrowFieldSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		self.arrowFieldSceneObj.uniforms.arrowZScale = guivars.arrowZScale
+		self.arrowFieldSceneObj.uniforms.arrowHeight = guivars.arrowHeight
+		self.arrowFieldSceneObj.uniforms.arrowLatDim = guivars.arrowLatDim
+		self.arrowFieldSceneObj.uniforms.arrowLonDim = guivars.arrowLonDim
+		self.arrowFieldSceneObj.uniforms.arrowEvenDistribute = guivars.arrowEvenDistribute
 		self.arrowFieldSceneObj.uniforms.arrowScale = guivars.arrowScale / BStat.mag.max
-		self.arrowFieldSceneObj.uniforms.fieldZScale = guivars.fieldZScale
-		
+
 		self.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
 		self.arrowFieldSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
 		self.arrowFieldSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
 		self.arrowFieldSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
 		self.arrowFieldSceneObj.uniforms.chartIs3D = chart.is3D or false
-		
+
 		self.arrowFieldSceneObj:draw()
 	end
 	if guivars.doDrawFieldLines then
 		self.fieldLineSceneObj.texs[1] = gradTex
 		self.fieldLineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		self.fieldLineSceneObj.uniforms.BMag = {BStat.mag.min, BStat.mag.max}
-	
-		-- TODO if we're using weights then why do we need the 'chartIs3D' flag? 
+
+		-- TODO if we're using weights then why do we need the 'chartIs3D' flag?
 		self.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
 		self.fieldLineSceneObj.uniforms.chartIs3D = chart.is3D or false
-		
+
 		self.fieldLineSceneObj:draw()
 	end
 
@@ -1815,8 +1786,16 @@ function App:updateGUI()
 	ig.luatableInputFloat('gradScale', guivars, 'gradScale')
 
 	ig.luatableInputFloat('alpha', guivars, 'drawAlpha')
-	ig.luatableInputFloat('field z', guivars, 'fieldZScale')
-	ig.luatableInputFloat('field size', guivars, 'arrowScale')
+	ig.luatableInputFloat('arrow altitude', guivars, 'arrowHeight')
+	ig.luatableInputFloat('arrow scale', guivars, 'arrowScale')
+	ig.luatableInputFloat('arrow z scale', guivars, 'arrowZScale')
+
+	if ig.luatableInputInt('arrow lat dim', guivars, 'arrowLatDim')
+	or ig.luatableInputInt('arrow lon dim', guivars, 'arrowLonDim')
+	or ig.luatableCheckbox('arrows even distribute', guivars, 'arrowEvenDistribute')
+	then
+		self:updateArrowTex()
+	end
 
 	-- how linear are the g and h coeffs?
 	-- can I just factor out the dt?
