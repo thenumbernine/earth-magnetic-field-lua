@@ -5,9 +5,11 @@ local math = require 'ext.math'	-- isfinite
 local timer = require 'ext.timer'
 local gl = require 'gl.setup'(cmdline.gl or 'OpenGL')
 local ffi = require 'ffi'
+local vec2f = require 'vec-ffi.vec2f'
 local vec3f = require 'vec-ffi.vec3f'
 local vec4f = require 'vec-ffi.vec4f'
 local quatf = require 'vec-ffi.quatf'
+local vector = require 'ffi.cpp.vector-lua'
 local matrix_ffi = require 'matrix.ffi'
 local template = require 'template'
 local class = require 'ext.class'
@@ -1210,8 +1212,6 @@ uniform bool chartIs3D;
 
 layout(location=0) in vec2 vertex;
 
-in vec2 texcoord;
-
 out vec3 colorv;
 
 uniform mat4 mvProjMat;
@@ -1273,7 +1273,18 @@ vec3 zAxis(vec4 q) {
 		1. - 2. * (q.x * q.x + q.y * q.y));
 }
 
+in float instanceID;
+uniform float arrowTexSize;
+uniform sampler2D arrowCoordTex;
+
 void main() {
+	vec2 arrowTexTC;
+	arrowTexTC.x = mod(instanceID, arrowTexSize);						// integer in x direction
+	arrowTexTC.y = (instanceID - arrowTexTC.x + .01) / arrowTexSize;	// integer in y direction
+	arrowTexTC += .5;
+	arrowTexTC /= arrowTexSize;
+	vec2 texcoord = texture(arrowCoordTex, arrowTexTC).xy;
+
 	vec3 latLonHeight = vec3(
 		(texcoord.y - .5) * 180.,	// lat in deg
 		(texcoord.x - .5) * 360., 	// lon in deg
@@ -1367,8 +1378,11 @@ void main() {
 		}
 
 		local vertexes = table()
-		local texcoords = table()
+		local instanceIDs = table()
 
+		local arrowCoords = vector'vec2f_t'
+		local id = 0
+		
 		for j=0,latdim-1 do
 			local v = (j + .5) / latdim
 			local lat = (v * 2 - 1) * 90
@@ -1379,22 +1393,44 @@ void main() {
 				local u = (i + .5) / thislondim
 				local lon = (u * 2 - 1) * 180
 				local lambda = math.rad(lon)
+				arrowCoords:emplace_back()[0]:set(u, v)
 
 				for _,q in ipairs(arrow) do
-					texcoords:insert(u)
-					texcoords:insert(v)
+					instanceIDs:insert(id)
 
 					vertexes:insert(q[1])
 					vertexes:insert(q[2])
 				end
+				id = id + 1
 			end
 		end
+		local arrowTexSize = math.ceil(math.sqrt(#arrowCoords))
+		arrowCoords:reserve(arrowTexSize * arrowTexSize)
+
+		self.arrowCoordTex = GLTex2D{
+			internalFormat = gl.GL_RG32F,
+			width = arrowTexSize,
+			height = arrowTexSize,
+			format = gl.GL_RG,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_NEAREST,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+			data = arrowCoords.v,
+		}:unbind()
 
 		self.arrowFieldSceneObj = GLSceneObject{
 			program = arrowFieldShader,
 			vertexes = { data = vertexes, dim = 2, },
 			geometry = { mode = gl.GL_LINES, },
+			uniforms = {
+				arrowTexSize = arrowTexSize,
+			},
 			texs = {
+				self.arrowCoordTex,
 				--[[ basis using textures
 				chart.basisTex:bind()
 				--]]
@@ -1403,7 +1439,7 @@ void main() {
 				--]]
 			},
 			attrs = {
-				texcoord = { buffer = { data = texcoords, dim = 2, } },
+				instanceID = { buffer = { data = instanceIDs, dim = 1, } },
 			},
 		}
 	end)
@@ -1536,6 +1572,12 @@ void main() {
 --DEBUG:assert(#vertexes % 4 == 0, '#vertexes '..#vertexes)
 					end
 
+					-- giving each geometry a different .vertexes array would remove the need for indicies
+					-- and on old webgl that would mean getting rid of a 65536 max vertex limit
+					-- but that'd mean changing sceneobject to rebind the 'vertexes' attribute each time the geometry changes
+					-- which maybe I should do since the .geometries field is new
+					-- and this design could still benefit from glMultiDrawArrays ... 
+					-- ... or not, that'd have to be an explicit separate case, since it requires a single vertexes to be bound.
 					geometries:insert{
 						mode = gl.GL_LINE_STRIP,
 						indexes = {
@@ -1690,22 +1732,27 @@ function App:update(...)
 		self.arrowFieldSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		self.arrowFieldSceneObj.uniforms.arrowScale = guivars.arrowScale / BStat.mag.max
 		self.arrowFieldSceneObj.uniforms.fieldZScale = guivars.fieldZScale
+		
 		self.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
 		self.arrowFieldSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
 		self.arrowFieldSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
 		self.arrowFieldSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
 		self.arrowFieldSceneObj.uniforms.chartIs3D = chart.is3D or false
+		
 		self.arrowFieldSceneObj:draw()
 	end
 	if guivars.doDrawFieldLines then
 		self.fieldLineSceneObj.texs[1] = gradTex
 		self.fieldLineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		self.fieldLineSceneObj.uniforms.BMag = {BStat.mag.min, BStat.mag.max}
+	
+		-- TODO if we're using weights then why do we need the 'chartIs3D' flag? 
 		self.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
 		self.fieldLineSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
 		self.fieldLineSceneObj.uniforms.chartIs3D = chart.is3D or false
-		self.fieldLineSceneObj.uniforms.BMag = {BStat.mag.min, BStat.mag.max}
+		
 		self.fieldLineSceneObj:draw()
 	end
 
