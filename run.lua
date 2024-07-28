@@ -1384,28 +1384,12 @@ uniform bool chartIs3D;
 uniform vec2 BMag;	// (min, max)
 
 //vertex = (phi (rad), lambda (rad), height (meters), |B|)
-#if 1 // vertexes from attrib
 layout(location=0) in vec4 vertex;
-#endif
-
-#if 0 // vertexes from texture
-uniform int fieldLineVtxsTexWidth;	// equals iterations in a line strip
-uniform int fieldLineVtxsTexHeight;	// equals # of start positions
-uniform sampler2D fieldLineVtxsTex;
-#endif
 
 out float BFrac;
 
 uniform mat4 mvProjMat;
 void main() {
-#if 0 // vertexes from texture
-	vec2 fieldLineVtxsTC;
-	int indexInLine = gl_VertexID % fieldLineVtxsTexWidth;
-	fieldLineVtxsTC.x = (float(indexInLine) + .5) / float(fieldLineVtxsTexWidth);
-	fieldLineVtxsTC.y = (float((gl_VertexID - indexInLine) / fieldLineVtxsTexWidth) + .5) / float(fieldLineVtxsTexHeight);
-	vec4 vertex = texture(fieldLineVtxsTex, fieldLineVtxsTC);
-#endif
-
 	vec3 latLonHeight = vec3(
 		vertex.xy * (180. / M_PI),
 		vertex.z);
@@ -1485,7 +1469,8 @@ print('# field line start coords', #startCoords)
 		local dparam = 1e-2
 		local maxiter = 400
 
--- [==[ new way, integrate on GPU
+		-- perform integration on the GPU ...
+
 		-- store current state here
 		-- I couldve used a pingpong but why waste the memory
 		local fieldLinePosTex = GLTex2D{
@@ -1677,92 +1662,27 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
 			end
 		end)
---]==]
 
---[==[ upload with cpu copy
-		local vertexes = table()
-		local geometries = table()
-
-		local fieldLineVtxsData = ffi.new('vec4f_t[?]', maxiter * #startCoords)
-		self.fieldLineVtxsTex:toCPU(fieldLineVtxsData)
-
-		for startIndex=0,#startCoords-1 do
-			local indexStart = #vertexes / 4
-
-			for k=0,maxiter-1 do
-				local src = fieldLineVtxsData[k + maxiter * startIndex]
-				vertexes:insert(src.x)
-				vertexes:insert(src.y)
-				vertexes:insert(src.z)
-				vertexes:insert(src.w)
-			end
-			local indexEnd = #vertexes / 4
-
-			-- giving each geometry a different .vertexes array would remove the need for indicies
-			-- and on old webgl that would mean getting rid of a 65536 max vertex limit
-			-- but that'd mean changing sceneobject to rebind the 'vertexes' attribute each time the geometry changes
-			-- which maybe I should do since the .geometries field is new
-			-- and this design could still benefit from glMultiDrawArrays ...
-			-- ... or not, that'd have to be an explicit separate case, since it requires a single vertexes to be bound.
-			geometries:insert{
-				mode = gl.GL_LINE_STRIP,
-				count = indexEnd - indexStart,
-				offset = indexStart,
-			}
-		end
-
-		self.fieldLineSceneObj = GLSceneObject{
-			program = fieldLineShader,
-			vertexes = {
-				data = vertexes,
-				dim = 4,
-			},
-			geometries = geometries,
-		}
---]==]
--- [==[ set vertexes via gpu
-	
-		-- [===[ can't seem to get pbos to work ....
+		-- [===[ copy from tex to array buffer with PBO's and glReadPixels from the FBO attached to the Tex to copy (smh...)
 		-- library design fallacy, unlike textures, the same gl buffer can be bound to various targets
 		self.fieldLineVertexBuf = require 'gl.pixelpackbuffer'{
-			-- [[
 			size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
 			type = gl.GL_FLOAT,
 			count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
 			dim = 4,
-			mode = gl.GL_DYNAMIC_DRAW,--gl.GL_STATIC_DRAW,
-			--]]
+			mode = gl.GL_STATIC_DRAW,
 		}
-		--[[
-		gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4, nil, gl.GL_DYNAMIC_DRAW)
-		--self.fieldLineVertexBuf:unbind()
-		-- assign afterwards or the class will allocate filler
-		self.fieldLineVertexBuf.size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4
-		self.fieldLineVertexBuf.type = gl.GL_FLOAT
-		self.fieldLineVertexBuf.count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height
-		self.fieldLineVertexBuf.dim = 4
-		self.fieldLineVertexBuf.mode = gl.GL_DYNAMIC_DRAW
-		--self.fieldLineVertexBuf.mode = gl.GL_STATIC_DRAW
-		--]]
 
-glreport'here'
 		fbo:bind()
-glreport'here'
 		fbo:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
-glreport'here'
 		local res, err = fbo.check()
 		if not res then print(err) end
-glreport'here'
 
-glreport'here'
 		gl.glViewport(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height)
 		-- read from bound FBO (attached to tex) to PBO (attached to buffer)
 		gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
-glreport'here'
 		fbo:unbind()
-glreport'here'
 		self.fieldLineVertexBuf:unbind()
-glreport'here'
 
 		-- and now the PBO buffer can be treated as an array buffer...so...
 		--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
@@ -1770,7 +1690,7 @@ glreport'here'
 		setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
 		--self.fieldLineVertexBuf:bind():unbind()
 		--]===]
-		--[===[ how about unpack buffer + texsubimage
+		--[===[ how about unpack buffer + texsubimage ?
 		self.fieldLineVertexBuf = require 'gl.pixelunpackbuffer'{
 			size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
 			type = gl.GL_FLOAT,
@@ -1809,7 +1729,6 @@ glreport'here'
 			--]]
 		}
 glreport'here'
---]==]
 	end)
 	
 	--gl.glEnable(gl.GL_CULL_FACE)
