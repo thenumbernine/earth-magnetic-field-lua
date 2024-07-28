@@ -677,9 +677,10 @@ function App:initGL(...)
 
 	-- lat/lon dim for surface statistics calculations
 	-- used for determining ranges, tho those ranges are invalide for any other times and altitudes
+	-- and in js-emulation it runs very slow
 	-- so i might try to get rid of this ...
-	local londim = 1440
-	local latdim = 720
+	local londim = js and 144 or 1440
+	local latdim = js and 72 or 720
 
 	self.fbo = GLFBO()
 		:unbind()
