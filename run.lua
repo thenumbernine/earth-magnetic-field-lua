@@ -295,7 +295,7 @@ local function calcB(phi, lambda, height)
 end
 
 -- ported from WMM2020 GeomagnetismLibrary.c
--- expects xyz in cartesian units of wgs84's 'a' parameter
+-- expects xyz in cartesian units earth-semimajor-axis
 -- output is in (radians, radians, km)
 -- TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
 local function cartesianToLatLonWGS84(x, y, z)
@@ -1287,7 +1287,6 @@ void main() {
 	//from meters to normalized coordinates
 	pos /= WGS84_a;
 
-	// TODO why correct for pos but not basis ?
 	if (chartIs3D) {
 		pos = vec3(pos.z, pos.x, pos.y);
 	}
@@ -1303,11 +1302,14 @@ void main() {
 ?>		+ weight_<?=name?> * chart_<?=name?>_basis(latLonHeight)
 <? end
 ?>	;
-	
-	// why aren't the basis calculations normalized?
-	e[0] = normalize(e[0]);
-	e[1] = normalize(e[1]);
-	e[2] = normalize(e[2]);
+
+#if 0	// see the comments in Chart:getGLSLFunc3D for why I'm permuting basis coords there and not here ...
+	if (chartIs3D) {
+		e[0] = xformZBackToZUp(e[0]);
+		e[1] = xformZBackToZUp(e[1]);
+		e[2] = xformZBackToZUp(e[2]);
+	}
+#endif
 
 	// do this before normalizing
 	BCoeffs.z *= arrowZScale;
@@ -1382,11 +1384,28 @@ uniform bool chartIs3D;
 uniform vec2 BMag;	// (min, max)
 
 //vertex = (phi (rad), lambda (rad), height (meters), |B|)
+#if 1 // vertexes from attrib
 layout(location=0) in vec4 vertex;
+#endif
+
+#if 0 // vertexes from texture
+uniform int fieldLineVtxsTexWidth;	// equals iterations in a line strip
+uniform int fieldLineVtxsTexHeight;	// equals # of start positions
+uniform sampler2D fieldLineVtxsTex;
+#endif
+
 out float BFrac;
 
 uniform mat4 mvProjMat;
 void main() {
+#if 0 // vertexes from texture
+	vec2 fieldLineVtxsTC;
+	int indexInLine = gl_VertexID % fieldLineVtxsTexWidth;
+	fieldLineVtxsTC.x = (float(indexInLine) + .5) / float(fieldLineVtxsTexWidth);
+	fieldLineVtxsTC.y = (float((gl_VertexID - indexInLine) / fieldLineVtxsTexWidth) + .5) / float(fieldLineVtxsTexHeight);
+	vec4 vertex = texture(fieldLineVtxsTex, fieldLineVtxsTC);
+#endif
+
 	vec3 latLonHeight = vec3(
 		vertex.xy * (180. / M_PI),
 		vertex.z);
@@ -1420,6 +1439,7 @@ void main() {
 ]],
 			{
 				gradTex = 0,
+				fieldLineVtxsTex = 1,
 			},
 		}:useNone()
 
@@ -1454,7 +1474,7 @@ how to build the field lines on the GPU ...
 				local Bx, By, Bz = calcB(phi, lambda, height0)
 				local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
 
-				for sign=-1,1,2 do
+				for sign=1,2 do
 					-- assert here that every other startCoords is going to integrate + - + - ...
 					startCoords:emplace_back()[0]:set(phi, lambda, height0, Bmag)
 				end
@@ -1470,8 +1490,8 @@ print('# field line start coords', #startCoords)
 		-- I couldve used a pingpong but why waste the memory
 		local fieldLinePosTex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
-			width = #startCoords,			-- 1D along width just because
-			height = 1,
+			width = 1,			-- 1D along height for blitting's sake 
+			height = #startCoords,
 			format = gl.GL_RGBA,
 			type = gl.GL_FLOAT,
 			minFilter = gl.GL_NEAREST,
@@ -1486,7 +1506,7 @@ print('# field line start coords', #startCoords)
 		-- use a fbo to integrate / generate our field line positions
 		-- seed on the y axis so that successive lines form along the x-axis i.e. along contiguous memory to be later passed off to the draw calls
 		-- (use a PBO?)
-		local fieldLineVtxsTex = GLTex2D{
+		self.fieldLineVtxsTex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
 			width = maxiter,
 			height = #startCoords,
@@ -1516,14 +1536,13 @@ print('# field line start coords', #startCoords)
 uniform float dt;
 ]]..calc_b_shader..[[
 
-
 // ported from WMM2020 GeomagnetismLibrary.c
-// expects xyz in cartesian units of wgs84's 'a' parameter
+// expects xyz in cartesian units earth-semimajor-axis
 // output is in (radians, radians, km)
 // TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
-vec3 cartesianToLatLonWGS84(vec3 cartesianPosInA) {
-	// lowercase is in km, uppercase is in m ... i know i need to fix this ...
-	vec3 pos = cartesianPosInA * wgs84_a;	// ... in km
+vec3 cartesianToLatLonWGS84(vec3 pos) {
+	// lowercase wgs84_a is in km, uppercase WGS84_a is in m ... i know i need to fix this ...
+	pos *= wgs84_a;	// convert from semimajor-axis units to km
 	float modified_b = pos.z < 0 ? -wgs84_b : wgs84_b;
 	float r = length(pos.xy);
 
@@ -1552,7 +1571,7 @@ vec3 cartesianToLatLonWGS84(vec3 cartesianPosInA) {
 
 	float height = (r - wgs84_a * t) * cos(rlat) + (pos.z - modified_b) * sin(rlat);
 	float zlong = atan(pos.y, pos.x);
-	if (zlong < 0) {
+	if (zlong < 0.) {
 		zlong += 2.*M_PI;
 	}
 	float lambda = zlong;
@@ -1562,15 +1581,11 @@ vec3 cartesianToLatLonWGS84(vec3 cartesianPosInA) {
 	return vec3(phi, lambda, height * 1e+3);		// km back to m
 }
 
-
-
-
 in vec2 texcoordv;
 out vec4 fragColor;
 uniform float dparam;
 uniform float texHeight;
 uniform sampler2D fieldLinePosTex;
-#define M_PI ]]..('%.49f'):format(math.pi)..[[
 
 void main() {
 	// sign is -1 for even rows, 1 for odd rows
@@ -1578,31 +1593,29 @@ void main() {
 
 	// texcoordv.x is the iteration, texcoordv.y is the coord index
 	// meanwhile fieldLinePosTex.x is the coord index, and it has no .y
-	vec4 phiLambdaHeightBMag = texture(fieldLinePosTex, vec2(texcoordv.y, .5));
-	float phi = phiLambdaHeightBMag.x;
+	vec4 phiLambdaHeightBMag = texture(fieldLinePosTex, vec2(.5, texcoordv.y));
 	vec3 latLonHeight = vec3(
 		phiLambdaHeightBMag.xy * 180. / M_PI, 
 		phiLambdaHeightBMag.z);
 
-	// calculate cartesian position, in units of WGS84_a
+	// calculate cartesian position, returns in meters, divide by WGS84_a (in meters) to get cartesian coords in units of earth semimajor axis
 	vec3 cartesianPos = chart_WGS84(latLonHeight) / WGS84_a;
+cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xformZBackToZUp
+
+// but don't undo the basis xform?  why ....
 	mat3 e = chart_WGS84_basis(latLonHeight);
-	// why aren't the basis calculations normalized?
-	e[0] = normalize(e[0]);
-	e[1] = normalize(e[1]);
-	e[2] = normalize(e[2]);
-	
+
 	vec3 B = calcB(phiLambdaHeightBMag.xyz);	// input: phi, lambda, height
 	
 	// should match phiLambdaHeightBMag.w which is the last bmag
 	// maybe I could save calcs by storing a second tex of the bvec alongside the plh vec ...
 	//vec3 BMag = length(B);
 
-	vec3 dv = B.x * e[0] + B.y * e[1] + B.z * e[2];	// e * B or B * e ?
+	vec3 dv = e * B;//B * e;	// e * B or B * e ?
 	vec3 n = normalize(dv) * sign * dparam;
 	cartesianPos += n;
 	//if (length(cartesianPos) < .02) then stop integrating or something meh
-	
+
 	phiLambdaHeightBMag.xyz = cartesianToLatLonWGS84(cartesianPos);
 	//and recompute the new coord's B and store the new Bmag ... wasted calcs ... I could avoid by storing both phi,lambda,hegiht and storing Bvec as we integrate,  but that's one extra texture ...
 	B = calcB(phiLambdaHeightBMag.xyz);
@@ -1621,83 +1634,67 @@ void main() {
 			texs = {fieldLinePosTex},
 		}
 
+		local stateFBO = GLFBO()
+			:setColorAttachmentTex2D(fieldLinePosTex.id)
+		local res, err = fbo.check()
+		if not res then print(err) end
+		stateFBO:unbind()
+
 		timer('integrating on GPU', function()
 			-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
 			-- (TODO store a current-state tex separately?)
-			fbo:bind()
 			for i=1,maxiter-1 do
-				-- draw from fieldLinePosTex into fieldLineVtxsTex
-				fbo:setColorAttachmentTex2D(fieldLineVtxsTex.id)
+				-- can I keep fbo bound as GL_FRAMEBUFFER and as GL_DRAW_FRAMEBUFFER?
+				fbo:bind()
+					:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
 				local res, err = fbo.check()
 				if not res then print(err) end
-				
-				gl.glViewport(i, 0, 1, fieldLineVtxsTex.height)
+				-- draw from fieldLinePosTex into fieldLineVtxsTex
+				gl.glViewport(i, 0, 1, self.fieldLineVtxsTex.height)
 				calcFieldLineVtxsTexSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
 				calcFieldLineVtxsTexSceneObj:draw()
-						
+				fbo:unbind()
+
 				-- read back the i'th column into the fieldLinePosTex texture
 				-- draw from fieldLineVtxsTex into fieldLinePosTex
-				fbo:setColorAttachmentTex2D(fieldLinePosTex.id)
-				local res, err = fbo.check()
-				if not res then print(err) end
-				gl.glReadPixels(i, 0, 1, fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0));
+				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, fbo.id)
+				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, stateFBO.id)
+				-- readpixels wrt viewport or framebuffer origin?
+				-- means use pixel buffers?  or use pixel buffers once i get around to writing this to vertex buffers for the geom?
+				--gl.glReadPixels(i, 0, 1, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0));
+				gl.glBlitFramebuffer(
+					i,		-- srcX0
+					0,		-- srcY0
+					i+1,	-- srcX1
+					self.fieldLineVtxsTex.height,	-- srcY1
+					0,		-- dstX0
+					0,		-- dstY0
+					1,		-- dstX1
+					self.fieldLineVtxsTex.height,	-- dstY1
+					gl.GL_COLOR_BUFFER_BIT,
+					gl.GL_NEAREST)
+				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
+				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
 			end
-			fbo:unbind()
 		end)
 --]==]
 
+-- [==[ upload with cpu copy
 		local vertexes = table()
 		local geometries = table()
 
-		for startIndex=0,#startCoords-1 do
-			local startCoord = startCoords.v[startIndex]
-			local phi, lambda, height = startCoord:unpack()
-			local sign = bit.band(startIndex, 1) * 2 - 1
+		local fieldLineVtxsData = ffi.new('vec4f_t[?]', maxiter * #startCoords)
+		self.fieldLineVtxsTex:toCPU(fieldLineVtxsData)
 
+		for startIndex=0,#startCoords-1 do
 			local indexStart = #vertexes / 4
 
---DEBUG:assert(#vertexes % 4 == 0)
-			vertexes:insert(phi)
-			vertexes:insert(lambda)
-			vertexes:insert(height)
---DEBUG:assert(#vertexes % 4 == 3)
-
-			local cx, cy, cz = charts.WGS84:chart(phi, lambda, height)
-			for k=1,maxiter do
---DEBUG:assert(#vertexes % 4 == 3)
-				local ex, ey, ez = charts.WGS84:basis(phi, lambda, height)
-				local Bx, By, Bz = calcB(phi, lambda, height)
-				local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
-				vertexes:insert(Bmag)
---DEBUG:assert(#vertexes % 4 == 0)
-
-				--local dv = Bx * ex + By * ey + Bz * ez
-				local dv = vec3f(
-					Bx * ex.x + By * ey.x + Bz * ez.x,
-					Bx * ex.y + By * ey.y + Bz * ez.y,
-					Bx * ex.z + By * ey.z + Bz * ez.z)
-				--if BmagSq < 100 then break end
-				local n = dv:normalize() * sign * dparam
-				cx = cx + n.x
-				cy = cy + n.y
-				cz = cz + n.z
-				local rSq = cx*cx + cy*cy + cz*cz
-				if rSq < .02 then break end
-				phi, lambda, height = cartesianToLatLonWGS84(cx, cy, cz)
-
-				-- TODO color by Bmag ...
---DEBUG:assert(#vertexes % 4 == 0)
-				vertexes:insert(phi)
-				vertexes:insert(lambda)
-				vertexes:insert(height)
---DEBUG:assert(#vertexes % 4 == 3)
-			end
-			if #vertexes % 4 == 3 then
-				local Bx, By, Bz = calcB(phi, lambda, height)
-				local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
---DEBUG:assert(#vertexes % 4 == 3)
-				vertexes:insert(Bmag)
---DEBUG:assert(#vertexes % 4 == 0, '#vertexes '..#vertexes)
+			for k=0,maxiter-1 do
+				local src = fieldLineVtxsData[k + maxiter * startIndex]
+				vertexes:insert(src.x)
+				vertexes:insert(src.y)
+				vertexes:insert(src.z)
+				vertexes:insert(src.w)
 			end
 			local indexEnd = #vertexes / 4
 
@@ -1722,8 +1719,77 @@ void main() {
 			},
 			geometries = geometries,
 		}
-	end)
+--]==]
+--[==[ set vertexes via gpu
+	
 
+		--[===[ can't seem to get pbos to work ....
+		-- library design fallacy, unlike textures, the same gl buffer can be bound to various targets
+		self.fieldLineVertexBuf = require 'gl.pixelpackbuffer'{
+			--[[
+			size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
+			type = gl.GL_FLOAT,
+			count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
+			dim = 4,
+			mode = gl.GL_DYNAMIC_DRAW,--gl.GL_STATIC_DRAW,
+			--]]
+		}
+		gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4, nil, gl.GL_DYNAMIC_DRAW)
+		--self.fieldLineVertexBuf:unbind()
+		-- assign afterwards or the class will allocate filler
+		self.fieldLineVertexBuf.size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4
+		self.fieldLineVertexBuf.type = gl.GL_FLOAT
+		self.fieldLineVertexBuf.count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height
+		self.fieldLineVertexBuf.dim = 4
+		self.fieldLineVertexBuf.mode = gl.GL_DYNAMIC_DRAW
+		--self.fieldLineVertexBuf.mode = gl.GL_STATIC_DRAW
+
+glreport'here'
+		fbo:bind()
+glreport'here'
+		fbo:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
+glreport'here'
+		local res, err = fbo.check()
+		if not res then print(err) end
+glreport'here'
+
+glreport'here'
+		gl.glViewport(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height)
+		-- read from bound FBO (attached to tex) to PBO (attached to buffer)
+		gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
+glreport'here'
+		fbo:unbind()
+glreport'here'
+		self.fieldLineVertexBuf:unbind()
+glreport'here'
+
+		-- and now the PBO buffer can be treated as an array buffer...so...
+		self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
+		--self.fieldLineVertexBuf:bind():unbind()
+		--]===]
+
+		local geometries = table()
+		for i=0,#startCoords-1 do
+			geometries:insert{
+				mode = gl.GL_LINE_STRIP,
+				count = maxiter,
+				offset = i * maxiter,
+			}
+		end
+		
+		self.fieldLineSceneObj = GLSceneObject{
+			program = fieldLineShader,
+			--vertexes = self.fieldLineVertexBuf,
+			geometries = geometries,
+			uniforms = {
+				fieldLineVtxsTexWidth = self.fieldLineVtxsTex.width,
+				fieldLineVtxsTexHeight = self.fieldLineVtxsTex.height,
+			},
+		}
+glreport'here'
+--]==]
+	end)
+	
 	--gl.glEnable(gl.GL_CULL_FACE)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 	gl.glEnable(gl.GL_BLEND)
@@ -1922,6 +1988,7 @@ function App:update(...)
 	end
 	if guivars.doDrawFieldLines then
 		self.fieldLineSceneObj.texs[1] = gradTex
+		self.fieldLineSceneObj.texs[2] = self.fieldLineVtxsTex
 		self.fieldLineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		self.fieldLineSceneObj.uniforms.BMag = {BStat.mag.min, BStat.mag.max}
 
