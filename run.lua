@@ -1425,9 +1425,13 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 	//if (length(cartesianPos) < .02) then stop integrating or something meh
 
 	phiLambdaHeightBMag.xyz = cartesianToLatLonWGS84(cartesianPos);
-	//and recompute the new coord's B and store the new Bmag ... wasted calcs ... I could avoid by storing both phi,lambda,hegiht and storing Bvec as we integrate,  but that's one extra texture ...
+
+#if 0	//... and recompute the new coord's B and store the new Bmag ... wasted calcs ... I could avoid by storing both phi,lambda,hegiht and storing Bvec as we integrate,  but that's one extra texture ...
 	B = calcB(phiLambdaHeightBMag.xyz);
+#endif // ... or just use the previous iterations' B field magnitude, so the lines will be one vertex off in their coloring, but we'll call 1/2 the calcB()'s
 	phiLambdaHeightBMag.w = length(B);
+	// TODO maybe, track two tex states: pos and B, and then you can have correct indexed BMag without double the calcs
+	
 	fragColor = phiLambdaHeightBMag;
 }
 ]],
@@ -1679,7 +1683,6 @@ function App:integrateFieldLines()
 	}
 	
 	-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
-	-- (TODO store a current-state tex separately?)
 	self.fieldLinePosTex:bind()
 	for i=1,guivars.fieldLineIter-1 do
 		-- draw from fieldLinePosTex into fieldLineVtxsTex
