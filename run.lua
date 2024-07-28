@@ -737,31 +737,6 @@ print"...done calculating basis"
 glreport'here'
 --]]
 
-		local calcBShader = GLProgram{
-			version = 'latest',
-			precision = 'best',
-			vertexCode = quadGeomVertexCode,
-			fragmentCode = [[
-uniform float dt;
-]]..calc_b_shader..template[[
-
-#define M_PI <?=('%.49f'):format(math.pi)?>
-
-in vec2 texcoordv;
-out vec4 fragColor;
-void main() {
-	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
-	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
-	vec3 B = calcB(vec3(phi, lambda, 0.));
-	fragColor = vec4(B, 1.);
-}
-]],
-			uniforms = {
-				dt = 0,
-			},
-		}:useNone()
-glreport'here'
-
 		BTex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
@@ -778,7 +753,29 @@ glreport'here'
 glreport'here'
 
 		local calcBSceneObj = GLSceneObject{
-			program = calcBShader,
+			program = {
+				version = 'latest',
+				precision = 'best',
+				vertexCode = quadGeomVertexCode,
+				fragmentCode = [[
+uniform float dt;
+]]..calc_b_shader..template[[
+
+#define M_PI <?=('%.49f'):format(math.pi)?>
+
+in vec2 texcoordv;
+out vec4 fragColor;
+void main() {
+	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
+	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
+	vec3 B = calcB(vec3(phi, lambda, 0.));
+	fragColor = vec4(B, 1.);
+}
+]],
+				uniforms = {
+					dt = 0,
+				},
+			},
 			geometry = self.quadGeom,
 		}
 
@@ -817,11 +814,27 @@ glreport'here'
 -- [=[ hmm, better way than copy paste?
 
 	timer('generating div B and curl B', function()
-		local calcB2Shader = GLProgram{
-			version = 'latest',
-			precision = 'best',
-			vertexCode = quadGeomVertexCode,
-			fragmentCode = [[
+		B2Tex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}:unbind()
+glreport'here'
+
+		local calcB2SceneObj = GLSceneObject{
+			program = {
+				version = 'latest',
+				precision = 'best',
+				vertexCode = quadGeomVertexCode,
+				fragmentCode = [[
 uniform float dt;
 ]]..calc_b_shader..template([[
 
@@ -864,36 +877,15 @@ void main() {
 		length(curl_B)
 	);
 }
-]],
-				{
+]],				{
 					latdim = latdim,
 					londim = londim,
 					clnumber = clnumber,
-				}
-			),
-			uniforms = {
-				dt = 0,
+				}),
+				uniforms = {
+					dt = 0,
+				},
 			},
-		}:useNone()
-glreport'here'
-
-		B2Tex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,
-			width = londim,
-			height = latdim,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}:unbind()
-glreport'here'
-
-		local calcB2SceneObj = GLSceneObject{
-			program = calcB2Shader,
 			geometry = self.quadGeom,
 		}
 
@@ -1210,6 +1202,9 @@ uniform bool chartIs3D;
 layout(location=0) in vec2 vertex;
 
 uniform mat4 mvProjMat;
+
+uniform float BMagMax;
+
 uniform float arrowHeight;
 uniform float arrowLatDim;
 uniform float arrowLonDim;
@@ -1308,9 +1303,11 @@ void main() {
 ?>		+ weight_<?=name?> * chart_<?=name?>_basis(latLonHeight)
 <? end
 ?>	;
-	vec3 ex = normalize(e[0]);
-	vec3 ey = normalize(e[1]);
-	vec3 ez = normalize(e[2]);
+	
+	// why aren't the basis calculations normalized?
+	e[0] = normalize(e[0]);
+	e[1] = normalize(e[1]);
+	e[2] = normalize(e[2]);
 
 	// do this before normalizing
 	BCoeffs.z *= arrowZScale;
@@ -1319,25 +1316,15 @@ void main() {
 	// before, so the scales can do something
 	if (arrowFieldNormalize) {
 		BCoeffs = normalize(BCoeffs);
+	} else {
+		BCoeffs = BCoeffs / BMagMax;
 	}
 
-	// TODO the scale still has the B field min/max baked into it,
-	// so if you click 'normalize' then you have to manually scale up to counter that
-	// TODO don't do that.
-
-	vec3 B = (arrowScale / arrowLatDim) * (
-		  ex * BCoeffs.x
-		+ ey * BCoeffs.y
-		+ ez * BCoeffs.z
-	);
+	vec3 B = (arrowScale / arrowLatDim) * (e * BCoeffs);	// e_i B^i
 
 	//vec3 Bey = perpTo(B);			// cross with furthest axis
 	//vec3 Bey = vec3(-B.y, B.x, 0.);	// cross with z axis
-	vec3 Bey = (arrowScale / arrowLatDim) * (
-		  ey * BCoeffs.x
-		- ex * BCoeffs.y
-		+ ez * BCoeffs.z
-	);
+	vec3 Bey = (arrowScale / arrowLatDim) * (e * vec3(-BCoeffs.y, BCoeffs.x, BCoeffs.z));
 
 	gl_Position = mvProjMat * vec4(
 		pos + vertex.x * B
@@ -1473,7 +1460,191 @@ how to build the field lines on the GPU ...
 				end
 			end
 		end
+print('# field line start coords', #startCoords)
+		
+		local dparam = 1e-2
+		local maxiter = 400
 
+-- [==[ new way, integrate on GPU
+		-- store current state here
+		-- I couldve used a pingpong but why waste the memory
+		local fieldLinePosTex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
+			width = #startCoords,			-- 1D along width just because
+			height = 1,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_NEAREST,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+			data = startCoords.v,
+		}:unbind()
+
+		-- use a fbo to integrate / generate our field line positions
+		-- seed on the y axis so that successive lines form along the x-axis i.e. along contiguous memory to be later passed off to the draw calls
+		-- (use a PBO?)
+		local fieldLineVtxsTex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
+			width = maxiter,
+			height = #startCoords,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_NEAREST,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}:subimage{	-- upload vertical strip
+			width = 1,
+			height = #startCoords,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			data = startCoords.v,
+		}:unbind()
+
+		local calcFieldLineVtxsTexSceneObj = GLSceneObject{
+			program = {
+				version = 'latest',
+				precision = 'best',
+				vertexCode = quadGeomVertexCode,
+				fragmentCode = chartCode
+..[[
+uniform float dt;
+]]..calc_b_shader..[[
+
+
+// ported from WMM2020 GeomagnetismLibrary.c
+// expects xyz in cartesian units of wgs84's 'a' parameter
+// output is in (radians, radians, km)
+// TODO just use charts.WGS84:chartInv(x,y,z) ?  or use this there?
+vec3 cartesianToLatLonWGS84(vec3 cartesianPosInA) {
+	// lowercase is in km, uppercase is in m ... i know i need to fix this ...
+	vec3 pos = cartesianPosInA * wgs84_a;	// ... in km
+	float modified_b = pos.z < 0 ? -wgs84_b : wgs84_b;
+	float r = length(pos.xy);
+
+	float e = (modified_b * pos.z - (wgs84_a * wgs84_a - modified_b * modified_b)) / (wgs84_a * r);
+	float f = (modified_b * pos.z + (wgs84_a * wgs84_a - modified_b * modified_b)) / (wgs84_a * r);
+	float p = (4. / 3.) * (e * f + 1.);
+	float q = 2. * (e * e - f * f);
+	float d = p * p * p + q * q;
+
+	float v;
+	if  (d >= 0) {
+		v = pow(sqrt(d) - q, 1./3.) - pow(sqrt(d) + q, 1./3.);
+	} else {
+		v = 2. * sqrt(-p) * cos(acos(q / (p * sqrt(-p))) / 3.);
+	}
+
+	if (v * v < abs(p)) {
+		v = -(v * v * v + 2. * q) / (3. * p);
+	}
+
+	float g = (sqrt(e * e + v) + e) / 2.;
+	float t = sqrt(g * g + (f - v * g) / (2. * g - e)) - g;
+
+	float rlat = atan((wgs84_a * (1. - t * t)) / (2. * modified_b * t));
+	float phi = rlat;
+
+	float height = (r - wgs84_a * t) * cos(rlat) + (pos.z - modified_b) * sin(rlat);
+	float zlong = atan(pos.y, pos.x);
+	if (zlong < 0) {
+		zlong += 2.*M_PI;
+	}
+	float lambda = zlong;
+	lambda += M_PI;
+	lambda = mod(lambda, 2. * M_PI);
+	lambda -= M_PI;
+	return vec3(phi, lambda, height * 1e+3);		// km back to m
+}
+
+
+
+
+in vec2 texcoordv;
+out vec4 fragColor;
+uniform float dparam;
+uniform float texHeight;
+uniform sampler2D fieldLinePosTex;
+#define M_PI ]]..('%.49f'):format(math.pi)..[[
+
+void main() {
+	// sign is -1 for even rows, 1 for odd rows
+	float sign = floor(mod(texcoordv.y * texHeight, 2.)) * 2. - 1.;
+
+	// texcoordv.x is the iteration, texcoordv.y is the coord index
+	// meanwhile fieldLinePosTex.x is the coord index, and it has no .y
+	vec4 phiLambdaHeightBMag = texture(fieldLinePosTex, vec2(texcoordv.y, .5));
+	float phi = phiLambdaHeightBMag.x;
+	vec3 latLonHeight = vec3(
+		phiLambdaHeightBMag.xy * 180. / M_PI, 
+		phiLambdaHeightBMag.z);
+
+	// calculate cartesian position, in units of WGS84_a
+	vec3 cartesianPos = chart_WGS84(latLonHeight) / WGS84_a;
+	mat3 e = chart_WGS84_basis(latLonHeight);
+	// why aren't the basis calculations normalized?
+	e[0] = normalize(e[0]);
+	e[1] = normalize(e[1]);
+	e[2] = normalize(e[2]);
+	
+	vec3 B = calcB(phiLambdaHeightBMag.xyz);	// input: phi, lambda, height
+	
+	// should match phiLambdaHeightBMag.w which is the last bmag
+	// maybe I could save calcs by storing a second tex of the bvec alongside the plh vec ...
+	//vec3 BMag = length(B);
+
+	vec3 dv = B.x * e[0] + B.y * e[1] + B.z * e[2];	// e * B or B * e ?
+	vec3 n = normalize(dv) * sign * dparam;
+	cartesianPos += n;
+	//if (length(cartesianPos) < .02) then stop integrating or something meh
+	
+	phiLambdaHeightBMag.xyz = cartesianToLatLonWGS84(cartesianPos);
+	//and recompute the new coord's B and store the new Bmag ... wasted calcs ... I could avoid by storing both phi,lambda,hegiht and storing Bvec as we integrate,  but that's one extra texture ...
+	B = calcB(phiLambdaHeightBMag.xyz);
+	phiLambdaHeightBMag.w = length(B);
+	fragColor = phiLambdaHeightBMag;
+}
+]],
+				uniforms = {
+					dt = 0,
+					dparam = dparam,
+					texHeight = #startCoords,
+					fieldLinePosTex = 0,
+				},
+			},
+			geometry = self.quadGeom,
+			texs = {fieldLinePosTex},
+		}
+
+		timer('integrating on GPU', function()
+			-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
+			-- (TODO store a current-state tex separately?)
+			fbo:bind()
+			for i=1,maxiter-1 do
+				-- draw from fieldLinePosTex into fieldLineVtxsTex
+				fbo:setColorAttachmentTex2D(fieldLineVtxsTex.id)
+				local res, err = fbo.check()
+				if not res then print(err) end
+				
+				gl.glViewport(i, 0, 1, fieldLineVtxsTex.height)
+				calcFieldLineVtxsTexSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
+				calcFieldLineVtxsTexSceneObj:draw()
+						
+				-- read back the i'th column into the fieldLinePosTex texture
+				-- draw from fieldLineVtxsTex into fieldLinePosTex
+				fbo:setColorAttachmentTex2D(fieldLinePosTex.id)
+				local res, err = fbo.check()
+				if not res then print(err) end
+				gl.glReadPixels(i, 0, 1, fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0));
+			end
+			fbo:unbind()
+		end)
+--]==]
 
 		local vertexes = table()
 		local geometries = table()
@@ -1492,9 +1663,8 @@ how to build the field lines on the GPU ...
 --DEBUG:assert(#vertexes % 4 == 3)
 
 			local cx, cy, cz = charts.WGS84:chart(phi, lambda, height)
-			for k=1,400 do
+			for k=1,maxiter do
 --DEBUG:assert(#vertexes % 4 == 3)
-				local dparam = sign * 1e-2
 				local ex, ey, ez = charts.WGS84:basis(phi, lambda, height)
 				local Bx, By, Bz = calcB(phi, lambda, height)
 				local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
@@ -1507,7 +1677,7 @@ how to build the field lines on the GPU ...
 					Bx * ex.y + By * ey.y + Bz * ez.y,
 					Bx * ex.z + By * ey.z + Bz * ez.z)
 				--if BmagSq < 100 then break end
-				local n = dv:normalize() * dparam
+				local n = dv:normalize() * sign * dparam
 				cx = cx + n.x
 				cy = cy + n.y
 				cz = cz + n.z
@@ -1739,7 +1909,8 @@ function App:update(...)
 		self.arrowFieldSceneObj.uniforms.arrowLatDim = guivars.arrowLatDim
 		self.arrowFieldSceneObj.uniforms.arrowLonDim = guivars.arrowLonDim
 		self.arrowFieldSceneObj.uniforms.arrowEvenDistribute = guivars.arrowEvenDistribute
-		self.arrowFieldSceneObj.uniforms.arrowScale = guivars.arrowScale / BStat.mag.max
+		self.arrowFieldSceneObj.uniforms.BMagMax = BStat.mag.max
+		self.arrowFieldSceneObj.uniforms.arrowScale = guivars.arrowScale
 
 		self.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
 		self.arrowFieldSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
