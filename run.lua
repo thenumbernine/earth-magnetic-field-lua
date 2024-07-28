@@ -1403,7 +1403,7 @@ void main() {
 	// meanwhile fieldLinePosTex.x is the coord index, and it has no .y
 	vec4 phiLambdaHeightBMag = texture(fieldLinePosTex, vec2(.5, texcoordv.y));
 	vec3 latLonHeight = vec3(
-		phiLambdaHeightBMag.xy * 180. / M_PI, 
+		phiLambdaHeightBMag.xy * 180. / M_PI,
 		phiLambdaHeightBMag.z);
 
 	// calculate cartesian position, returns in meters, divide by WGS84_a (in meters) to get cartesian coords in units of earth semimajor axis
@@ -1414,7 +1414,7 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 	mat3 e = chart_WGS84_basis(latLonHeight);
 
 	vec3 B = calcB(phiLambdaHeightBMag.xyz);	// input: phi, lambda, height
-	
+
 	// should match phiLambdaHeightBMag.w which is the last bmag
 	// maybe I could save calcs by storing a second tex of the bvec alongside the plh vec ...
 	//vec3 BMag = length(B);
@@ -1431,7 +1431,7 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 #endif // ... or just use the previous iterations' B field magnitude, so the lines will be one vertex off in their coloring, but we'll call 1/2 the calcB()'s
 	phiLambdaHeightBMag.w = length(B);
 	// TODO maybe, track two tex states: pos and B, and then you can have correct indexed BMag without double the calcs
-	
+
 	fragColor = phiLambdaHeightBMag;
 }
 ]],
@@ -1445,7 +1445,7 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 		geometry = self.quadGeom,
 		--texs = {self.fieldLinePosTex},	-- but don't set it here, do it in the render loop
 	}
-	
+
 	-- draw field lines
 	self.fieldLineShader = GLProgram{
 		version = 'latest',
@@ -1503,7 +1503,7 @@ void main() {
 			fieldLineVtxsTex = 1,
 		},
 	}:useNone()
-	
+
 	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 
 	self:updateFieldLines()
@@ -1596,14 +1596,14 @@ how to build the field lines on the GPU ...
 		end
 	end
 print('# field line start coords', #self.startCoords)
-	
+
 	-- perform integration on the GPU ...
 
 	-- store current state here
 	-- I couldve used a pingpong but why waste the memory
 	self.fieldLinePosTex = GLTex2D{
 		internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
-		width = 1,			-- 1D along height for blitting's sake 
+		width = 1,			-- 1D along height for blitting's sake
 		height = #self.startCoords,
 		format = gl.GL_RGBA,
 		type = gl.GL_FLOAT,
@@ -1647,7 +1647,7 @@ print('# field line start coords', #self.startCoords)
 		dim = 4,
 		mode = gl.GL_STREAM_DRAW,--gl.GL_STATIC_DRAW,
 	}:unbind()
-	
+
 	self.fieldLineSceneObj = GLSceneObject{
 		program = self.fieldLineShader,
 		vertexes = self.fieldLineVertexBuf,
@@ -1681,7 +1681,7 @@ function App:integrateFieldLines()
 		dparam = guivars.fieldLineIntStep,
 		texHeight = self.fieldLineVtxsTex.height,	-- #startCoords
 	}
-	
+
 	-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
 	self.fieldLinePosTex:bind()
 	for i=1,guivars.fieldLineIter-1 do
@@ -1698,27 +1698,13 @@ function App:integrateFieldLines()
 
 	-- now use a PBO to copy the tex into a vertex attribute
 
-	-- [===[ using pixel-pack and readpixels ... and a fbo...
 	self.fieldLineVertexBuf:bind(gl.GL_PIXEL_PACK_BUFFER)
 	gl.glViewport(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height)
 	-- read from bound FBO (attached to tex) to PBO (attached to buffer)
 	gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
 	self.fieldLineVertexBuf:unbind(gl.GL_PIXEL_PACK_BUFFER)
+
 	self.fbo:unbind()
-	--]===]
-	--[===[ using pixel-unpack + texsubimage ?
-	self.fbo:unbind()
-	self.fieldLineVertexBuf:bind(gl.GL_PIXEL_UNPACK_BUFFER)
-	--self.fieldLineVtxsTex
-	--	:bind()
-	--	:subimage{x=0, y=0, width=self.fieldLineVtxsTex.width, height=self.fieldLineVtxsTex.height, format=gl.GL_RGBA, type=gl.GL_FLOAT, data=ffi.cast('void*', 0)}
-	--	:unbind()
-	gl.glBindTexture(gl.GL_TEXTURE_2D, self.fieldLineVtxsTex.id)
-	gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
-	--gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, 0, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
-	gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-	self.fieldLineVertexBuf:unbind(gl.GL_PIXEL_UNPACK_BUFFER)
-	--]===]
 
 	gl.glReadBuffer(gl.GL_BACK)
 glreport'here'
@@ -1826,7 +1812,7 @@ end
 
 function App:update(...)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
-	
+
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
 	local shader = assert(overlays[tonumber(guivars.overlayIndex)]).shader
@@ -1886,13 +1872,13 @@ function App:update(...)
 	end
 
 	gl.glEnable(gl.GL_BLEND)
-	
+
 	-- why cull each side separately?
 	--gl.glCullFace(gl.GL_FRONT)
 	chart:draw(self, shader, gradTex)
 	--gl.glCullFace(gl.GL_BACK)
 	--chart:draw(self, shader, gradTex)
-	
+
 	gl.glDisable(gl.GL_DEPTH_TEST)
 	gl.glDisable(gl.GL_BLEND)
 
@@ -1960,7 +1946,7 @@ function App:updateGUI()
 	then
 		self:updateArrowTex()
 	end
-	
+
 	if ig.luatableInputFloat('field line init altitude', guivars, 'fieldLineHeight')	-- techniically this should just trigger a re-integration, not a realloc
 	or ig.luatableInputInt('field line lat dim', guivars, 'fieldLineLatDim')
 	or ig.luatableInputInt('field line lon dim', guivars, 'fieldLineLonDim')
