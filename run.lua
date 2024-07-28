@@ -1662,30 +1662,25 @@ end
 -- if fieldDT changes then reintegrate
 -- TODO fieldLineHeight ... but that'd mean repopulating the initial z channel
 function App:integrateFieldLines()
-	gl.glDisable(gl.GL_DEPTH_TEST)
-	gl.glDisable(gl.GL_BLEND)
-
 	-- do the integration using FBO's onto our texture
 
-	--timer('integrating on GPU', function()
 	self.fbo:bind()
 		:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
 	local res, err = self.fbo.check()
 	if not res then print(err) end
 	gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT0)
-	
-	self.integrateFieldLinesSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
-	self.integrateFieldLinesSceneObj.uniforms.dt = guivars.fieldDT
-	self.integrateFieldLinesSceneObj.uniforms.dparam = guivars.fieldLineIntStep
-	self.integrateFieldLinesSceneObj.uniforms.texHeight = self.fieldLineVtxsTex.height	-- #startCoords
-	
-	self.fieldLinePosTex:bind()
-	-- copy the initial states in fieldLinePosTex to the first column of fieldLineVtxsTex
-	gl.glViewport(0, 0, 1, self.fieldLineVtxsTex.height)
-	gl.glCopyTexSubImage2D(self.fieldLinePosTex.target, 0, 0, 0, 0, 0, 1, self.fieldLineVtxsTex.height)
+
+	self.integrateFieldLinesSceneObj.program:use()
+	self.integrateFieldLinesSceneObj.program:setUniforms{
+		mvProjMat = self.unitProjMat.ptr,
+		dt = guivars.fieldDT,
+		dparam = guivars.fieldLineIntStep,
+		texHeight = self.fieldLineVtxsTex.height,	-- #startCoords
+	}
 	
 	-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
 	-- (TODO store a current-state tex separately?)
+	self.fieldLinePosTex:bind()
 	for i=1,guivars.fieldLineIter-1 do
 		-- draw from fieldLinePosTex into fieldLineVtxsTex
 		gl.glViewport(i, 0, 1, self.fieldLineVtxsTex.height)
@@ -1697,43 +1692,33 @@ function App:integrateFieldLines()
 	gl.glCopyTexSubImage2D(self.fieldLinePosTex.target, 0, 0, 0, 0, 0, 1, self.fieldLineVtxsTex.height)
 
 	self.fieldLinePosTex:unbind()
-	--end)	-- "...done integrating on GPU (0.00076794624328613s)" ... verrry quick
-	self.fbo:unbind()
-	gl.glReadBuffer(gl.GL_BACK)
 
 	-- now use a PBO to copy the tex into a vertex attribute
 
 	-- [===[ using pixel-pack and readpixels ... and a fbo...
 	self.fieldLineVertexBuf:bind(gl.GL_PIXEL_PACK_BUFFER)
-
-	self.fbo:bind()
-	self.fbo:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
-	local res, err = self.fbo.check()
-	if not res then print(err) end
-
 	gl.glViewport(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height)
 	-- read from bound FBO (attached to tex) to PBO (attached to buffer)
 	gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
-	self.fbo:unbind()
 	self.fieldLineVertexBuf:unbind(gl.GL_PIXEL_PACK_BUFFER)
+	self.fbo:unbind()
 	--]===]
 	--[===[ using pixel-unpack + texsubimage ?
-	self.fieldLineVertexBuf.target = gl.GL_PIXEL_UNPACK_BUFFER
-	self.fieldLineVertexBuf:bind()
+	self.fbo:unbind()
+	self.fieldLineVertexBuf:bind(gl.GL_PIXEL_UNPACK_BUFFER)
 	--self.fieldLineVtxsTex
 	--	:bind()
 	--	:subimage{x=0, y=0, width=self.fieldLineVtxsTex.width, height=self.fieldLineVtxsTex.height, format=gl.GL_RGBA, type=gl.GL_FLOAT, data=ffi.cast('void*', 0)}
 	--	:unbind()
-	gl.glBindTexture(gl.GL_TEXTURE_2D, self.fieldLineVertexBuf.id)
+	gl.glBindTexture(gl.GL_TEXTURE_2D, self.fieldLineVtxsTex.id)
 	gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
+	--gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, 0, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
 	gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-	self.fieldLineVertexBuf:unbind()
-	self.fieldLineVertexBuf.target = nil	-- clear it / reset to default GL_ARRAY_BUFFER
+	self.fieldLineVertexBuf:unbind(gl.GL_PIXEL_UNPACK_BUFFER)
 	--]===]
 
+	gl.glReadBuffer(gl.GL_BACK)
 glreport'here'
-	gl.glEnable(gl.GL_DEPTH_TEST)
-	gl.glEnable(gl.GL_BLEND)
 end
 
 local function degmintofrac(deg, min, sec)
@@ -1838,6 +1823,8 @@ end
 
 function App:update(...)
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
+	
+	gl.glEnable(gl.GL_DEPTH_TEST)
 
 	local shader = assert(overlays[tonumber(guivars.overlayIndex)]).shader
 	local gradTex = assert(gradients[tonumber(guivars.gradientIndex)]).tex
@@ -1895,11 +1882,16 @@ function App:update(...)
 		self.fieldLineSceneObj:draw()
 	end
 
+	gl.glEnable(gl.GL_BLEND)
+	
 	-- why cull each side separately?
 	--gl.glCullFace(gl.GL_FRONT)
 	chart:draw(self, shader, gradTex)
 	--gl.glCullFace(gl.GL_BACK)
 	--chart:draw(self, shader, gradTex)
+	
+	gl.glDisable(gl.GL_DEPTH_TEST)
+	gl.glDisable(gl.GL_BLEND)
 
 	glreport'here'
 
@@ -1983,10 +1975,6 @@ function App:updateGUI()
 	-- can I just factor out the dt?
 	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
 	if ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', -50, 50) then
-		self:integrateFieldLines()
-	end
-
-	if ig.igButton'reintegrate' then
 		self:integrateFieldLines()
 	end
 end
