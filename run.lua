@@ -1528,7 +1528,7 @@ uniform float dt;
 vec3 cartesianToLatLonWGS84(vec3 pos) {
 	// lowercase wgs84_a is in km, uppercase WGS84_a is in m ... i know i need to fix this ...
 	pos *= wgs84_a;	// convert from semimajor-axis units to km
-	float modified_b = pos.z < 0 ? -wgs84_b : wgs84_b;
+	float modified_b = pos.z < 0. ? -wgs84_b : wgs84_b;
 	float r = length(pos.xy);
 
 	float e = (modified_b * pos.z - (wgs84_a * wgs84_a - modified_b * modified_b)) / (wgs84_a * r);
@@ -1538,7 +1538,7 @@ vec3 cartesianToLatLonWGS84(vec3 pos) {
 	float d = p * p * p + q * q;
 
 	float v;
-	if  (d >= 0) {
+	if  (d >= 0.) {
 		v = pow(sqrt(d) - q, 1./3.) - pow(sqrt(d) + q, 1./3.);
 	} else {
 		v = 2. * sqrt(-p) * cos(acos(q / (p * sqrt(-p))) / 3.);
@@ -1557,7 +1557,7 @@ vec3 cartesianToLatLonWGS84(vec3 pos) {
 	float height = (r - wgs84_a * t) * cos(rlat) + (pos.z - modified_b) * sin(rlat);
 	float zlong = atan(pos.y, pos.x);
 	if (zlong < 0.) {
-		zlong += 2.*M_PI;
+		zlong += 2. * M_PI;
 	}
 	float lambda = zlong;
 	lambda += M_PI;
@@ -1619,49 +1619,32 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 			texs = {fieldLinePosTex},
 		}
 
-		local stateFBO = GLFBO()
-			:setColorAttachmentTex2D(fieldLinePosTex.id)
+		--local readbuffer = ffi.new('int[1]')
+		--gl.glGetIntegerv(gl.GL_READ_BUFFER, readbuffer)
+		--print('current bound read buffer', readbuffer[0])	-- gl.GL_BACK by default, even in GLES
+
+		--timer('integrating on GPU', function()
+		fbo:bind()
+			:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
 		local res, err = fbo.check()
 		if not res then print(err) end
-		stateFBO:unbind()
+		gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT0)
+		
+		-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
+		-- (TODO store a current-state tex separately?)
+		for i=1,maxiter-1 do
+			-- draw from fieldLinePosTex into fieldLineVtxsTex
+			gl.glViewport(i, 0, 1, self.fieldLineVtxsTex.height)
+			calcFieldLineVtxsTexSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
+			calcFieldLineVtxsTexSceneObj:draw()
 
-		timer('integrating on GPU', function()
-			-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
-			-- (TODO store a current-state tex separately?)
-			for i=1,maxiter-1 do
-				-- can I keep fbo bound as GL_FRAMEBUFFER and as GL_DRAW_FRAMEBUFFER?
-				fbo:bind()
-					:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
-				local res, err = fbo.check()
-				if not res then print(err) end
-				-- draw from fieldLinePosTex into fieldLineVtxsTex
-				gl.glViewport(i, 0, 1, self.fieldLineVtxsTex.height)
-				calcFieldLineVtxsTexSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
-				calcFieldLineVtxsTexSceneObj:draw()
-				fbo:unbind()
-
-				-- read back the i'th column into the fieldLinePosTex texture
-				-- draw from fieldLineVtxsTex into fieldLinePosTex
-				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, fbo.id)
-				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, stateFBO.id)
-				-- readpixels wrt viewport or framebuffer origin?
-				-- means use pixel buffers?  or use pixel buffers once i get around to writing this to vertex buffers for the geom?
-				--gl.glReadPixels(i, 0, 1, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0));
-				gl.glBlitFramebuffer(
-					i,		-- srcX0
-					0,		-- srcY0
-					i+1,	-- srcX1
-					self.fieldLineVtxsTex.height,	-- srcY1
-					0,		-- dstX0
-					0,		-- dstY0
-					1,		-- dstX1
-					self.fieldLineVtxsTex.height,	-- dstY1
-					gl.GL_COLOR_BUFFER_BIT,
-					gl.GL_NEAREST)
-				gl.glBindFramebuffer(gl.GL_READ_FRAMEBUFFER, 0)
-				gl.glBindFramebuffer(gl.GL_DRAW_FRAMEBUFFER, 0)
-			end
-		end)
+			fieldLinePosTex:bind()
+			gl.glCopyTexSubImage2D(fieldLinePosTex.target, 0, 0, 0, i, 0, 1, self.fieldLineVtxsTex.height)
+			fieldLinePosTex:unbind()
+		end
+		--end)	-- "...done integrating on GPU (0.00076794624328613s)" ... verrry quick
+		fbo:unbind()
+		gl.glReadBuffer(gl.GL_BACK)
 
 		-- [===[ copy from tex to array buffer with PBO's and glReadPixels from the FBO attached to the Tex to copy (smh...)
 		-- library design fallacy, unlike textures, the same gl buffer can be bound to various targets
@@ -1721,12 +1704,6 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 			program = fieldLineShader,
 			vertexes = self.fieldLineVertexBuf,
 			geometries = geometries,
-			--[[
-			uniforms = {
-				fieldLineVtxsTexWidth = self.fieldLineVtxsTex.width,
-				fieldLineVtxsTexHeight = self.fieldLineVtxsTex.height,
-			},
-			--]]
 		}
 glreport'here'
 	end)
@@ -1929,7 +1906,6 @@ function App:update(...)
 	end
 	if guivars.doDrawFieldLines then
 		self.fieldLineSceneObj.texs[1] = gradTex
-		self.fieldLineSceneObj.texs[2] = self.fieldLineVtxsTex
 		self.fieldLineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 		self.fieldLineSceneObj.uniforms.BMag = {BStat.mag.min, BStat.mag.max}
 
