@@ -377,6 +377,8 @@ local guivars = {
 	doDrawArrowField = true,
 	doDrawFieldLines = true,
 
+	gradScale = 1,
+
 	fieldDT = 0,
 
 	arrowHeight = 0,
@@ -388,7 +390,10 @@ local guivars = {
 	arrowZScale = 1,
 	arrowFieldNormalize = false,
 
-	gradScale = 1,
+	fieldLineHeight = 0,
+	fieldLineLatDim = 15,
+	fieldLineLonDim = 30,
+	fieldLineEvenDistribute = false,
 }
 
 
@@ -646,7 +651,7 @@ function App:initGL(...)
 		grad.tex = grad:gen()
 	end
 
-	local calc_b_shader = template(assert(path'calc_b.shader':read()), {
+	self.calc_b_shader = template(assert(path'calc_b.shader':read()), {
 		wgs84 = wgs84,
 		wmm = wmm,
 	})
@@ -670,11 +675,11 @@ function App:initGL(...)
 	local londim = 1440
 	local latdim = 720
 
-	local fbo = GLFBO()
+	self.fbo = GLFBO()
 		:unbind()
 glreport'here'
 
-	local quadGeomVertexCode = [[
+	self.quadGeomVertexCode = [[
 layout(location=0) in vec2 vertex;
 out vec2 texcoordv;
 uniform mat4 mvProjMat;
@@ -756,10 +761,10 @@ glreport'here'
 			program = {
 				version = 'latest',
 				precision = 'best',
-				vertexCode = quadGeomVertexCode,
+				vertexCode = self.quadGeomVertexCode,
 				fragmentCode = [[
 uniform float dt;
-]]..calc_b_shader..template[[
+]]..self.calc_b_shader..template[[
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
@@ -780,7 +785,7 @@ void main() {
 		}
 
 		-- BData / B2Data is only used for stat computation
-		fbo:draw{
+		self.fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			dest = BTex,
 			callback = function()
@@ -833,10 +838,10 @@ glreport'here'
 			program = {
 				version = 'latest',
 				precision = 'best',
-				vertexCode = quadGeomVertexCode,
+				vertexCode = self.quadGeomVertexCode,
 				fragmentCode = [[
 uniform float dt;
-]]..calc_b_shader..template([[
+]]..self.calc_b_shader..template([[
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
@@ -890,7 +895,7 @@ void main() {
 		}
 
 		-- only used for stat calc
-		fbo:draw{
+		self.fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			dest = B2Tex,
 			callback = function()
@@ -1032,7 +1037,7 @@ void main() {
 			vertexCode = overlayVertexCode,
 			fragmentCode = [[
 uniform float dt;
-]]..calc_b_shader..template([[
+]]..self.calc_b_shader..template([[
 
 // TODO if you use tex then at the very pole there is a numeric artifact ...
 #define CALC_B_ON_GPU
@@ -1190,7 +1195,7 @@ void main() {
 			vertexCode = chartCode
 ..[[
 uniform float dt;
-]]..calc_b_shader
+]]..self.calc_b_shader
 ..template([[
 
 <? for _,name in ipairs(chartCNames) do
@@ -1371,7 +1376,7 @@ void main() {
 	end)
 
 	timer('building field lines', function()
-		local fieldLineShader = GLProgram{
+		self.fieldLineShader = GLProgram{
 			version = 'latest',
 			precision = 'best',
 			vertexCode = chartCode..template([[
@@ -1426,11 +1431,67 @@ void main() {
 				fieldLineVtxsTex = 1,
 			},
 		}:useNone()
+	
+		self:updateFieldLines()
+	end)
+	
+	--gl.glEnable(gl.GL_CULL_FACE)
+	gl.glEnable(gl.GL_DEPTH_TEST)
+	gl.glEnable(gl.GL_BLEND)
+	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+end
 
-		local londim = 30	-- field line lon dim
-		local latdim = 15	-- field line lat dim
-		local evenDistribute = false	-- field line even distribute
-		local height0 = 0	-- field line initial height
+function App:updateArrowTex()
+	-- whenever lat/lon are resized, just rebuild this
+	-- technically you could even do it on the GPU as a GPU pass ...
+	-- just 1) unravel the texcoord to 1D index
+	-- then 2) ... well the inverse map of the sum of ceil(londim * cos(phi)) is a bit tricky ...
+	local arrowCoords = vector'vec2f_t'
+	local londim = guivars.arrowLonDim
+	local latdim = guivars.arrowLatDim
+	for j=0,latdim-1 do
+		local v = (j + .5) / latdim
+		local lat = (v * 2 - 1) * 90
+		local phi = math.rad(lat)
+
+		local thislondim = guivars.arrowEvenDistribute
+			and math.max(1, math.ceil(londim * math.cos(phi)))
+			or londim
+		for i=0,thislondim-1 do
+			local u = (i + .5) / thislondim
+			local lon = (u * 2 - 1) * 180
+			local lambda = math.rad(lon)
+			arrowCoords:emplace_back()[0]:set(u, v)
+		end
+	end
+	local arrowTexSize = math.ceil(math.sqrt(#arrowCoords))
+	arrowCoords:reserve(arrowTexSize * arrowTexSize)
+
+	local arrowCoordTex = GLTex2D{
+		internalFormat = gl.GL_RG32F,
+		width = arrowTexSize,
+		height = arrowTexSize,
+		format = gl.GL_RG,
+		type = gl.GL_FLOAT,
+		minFilter = gl.GL_NEAREST,
+		magFilter = gl.GL_NEAREST,
+		wrap = {
+			s = gl.GL_REPEAT,
+			t = gl.GL_REPEAT,
+		},
+		data = arrowCoords.v,
+	}:unbind()
+
+	self.arrowFieldSceneObj.geometry.instanceCount = #arrowCoords
+	self.arrowFieldSceneObj.uniforms.arrowTexSize = arrowTexSize
+	self.arrowFieldSceneObj.texs[1] = arrowCoordTex
+end
+
+function App:updateFieldLines()
+	local londim = guivars.fieldLineLonDim	-- field line lon dim
+	local latdim = guivars.fieldLineLatDim	-- field line lat dim
+	local evenDistribute = guivars.fieldLineEvenDistribute	-- field line even distribute
+	local height0 = guivars.fieldLineHeight	-- field line initial height
 
 --[[
 how to build the field lines on the GPU ...
@@ -1439,87 +1500,87 @@ how to build the field lines on the GPU ...
 3) copy the fbo tex to an array buffer, and use it as a bunch of line strip vertexes
 --]]
 
-		local startCoords = vector'vec4f_t'
-		-- try to draw magnetic field lines ...
-		for j=0,latdim-1 do
-			local v = (j + .5) / latdim
-			local lat = (v * 2 - 1) * 90
-			local phi = math.rad(lat)
+	local startCoords = vector'vec4f_t'
+	-- try to draw magnetic field lines ...
+	for j=0,latdim-1 do
+		local v = (j + .5) / latdim
+		local lat = (v * 2 - 1) * 90
+		local phi = math.rad(lat)
 
-			local thislondim = evenDistribute
-				and math.max(1, math.ceil(londim * math.cos(phi)))
-				or londim
-			for i=0,thislondim-1 do
-				local u = (i + .5) / thislondim
-				local lon = (u * 2 - 1) * 180
-				local lambda = math.rad(lon)
+		local thislondim = evenDistribute
+			and math.max(1, math.ceil(londim * math.cos(phi)))
+			or londim
+		for i=0,thislondim-1 do
+			local u = (i + .5) / thislondim
+			local lon = (u * 2 - 1) * 180
+			local lambda = math.rad(lon)
 
-				-- TODO Bmag on the GPU would be nice ...
-				local Bx, By, Bz = calcB(phi, lambda, height0)
-				local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
+			-- TODO Bmag on the GPU would be nice ...
+			local Bx, By, Bz = calcB(phi, lambda, height0)
+			local Bmag = math.sqrt(Bx^2 + By^2 + Bz^2)
 
-				for sign=1,2 do
-					-- assert here that every other startCoords is going to integrate + - + - ...
-					startCoords:emplace_back()[0]:set(phi, lambda, height0, Bmag)
-				end
+			for sign=1,2 do
+				-- assert here that every other startCoords is going to integrate + - + - ...
+				startCoords:emplace_back()[0]:set(phi, lambda, height0, Bmag)
 			end
 		end
+	end
 print('# field line start coords', #startCoords)
-		
-		local dparam = 1e-2
-		local maxiter = 400
+	
+	local dparam = 1e-2
+	local maxiter = 400
 
-		-- perform integration on the GPU ...
+	-- perform integration on the GPU ...
 
-		-- store current state here
-		-- I couldve used a pingpong but why waste the memory
-		local fieldLinePosTex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
-			width = 1,			-- 1D along height for blitting's sake 
-			height = #startCoords,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-			data = startCoords.v,
-		}:unbind()
+	-- store current state here
+	-- I couldve used a pingpong but why waste the memory
+	local fieldLinePosTex = GLTex2D{
+		internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
+		width = 1,			-- 1D along height for blitting's sake 
+		height = #startCoords,
+		format = gl.GL_RGBA,
+		type = gl.GL_FLOAT,
+		minFilter = gl.GL_NEAREST,
+		magFilter = gl.GL_NEAREST,
+		wrap = {
+			s = gl.GL_REPEAT,
+			t = gl.GL_REPEAT,
+		},
+		data = startCoords.v,
+	}:unbind()
 
-		-- use a fbo to integrate / generate our field line positions
-		-- seed on the y axis so that successive lines form along the x-axis i.e. along contiguous memory to be later passed off to the draw calls
-		-- (use a PBO?)
-		self.fieldLineVtxsTex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
-			width = maxiter,
-			height = #startCoords,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}:subimage{	-- upload vertical strip
-			width = 1,
-			height = #startCoords,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			data = startCoords.v,
-		}:unbind()
+	-- use a fbo to integrate / generate our field line positions
+	-- seed on the y axis so that successive lines form along the x-axis i.e. along contiguous memory to be later passed off to the draw calls
+	-- (use a PBO?)
+	self.fieldLineVtxsTex = GLTex2D{
+		internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
+		width = maxiter,
+		height = #startCoords,
+		format = gl.GL_RGBA,
+		type = gl.GL_FLOAT,
+		minFilter = gl.GL_NEAREST,
+		magFilter = gl.GL_NEAREST,
+		wrap = {
+			s = gl.GL_REPEAT,
+			t = gl.GL_REPEAT,
+		},
+	}:subimage{		-- upload initial state as a vertical strip
+		width = 1,
+		height = #startCoords,
+		format = gl.GL_RGBA,
+		type = gl.GL_FLOAT,
+		data = startCoords.v,
+	}:unbind()
 
-		local calcFieldLineVtxsTexSceneObj = GLSceneObject{
-			program = {
-				version = 'latest',
-				precision = 'best',
-				vertexCode = quadGeomVertexCode,
-				fragmentCode = chartCode
+	self.integrateFieldLinesSceneObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			vertexCode = self.quadGeomVertexCode,
+			fragmentCode = chartCode
 ..[[
 uniform float dt;
-]]..calc_b_shader..[[
+]]..self.calc_b_shader..[[
 
 // ported from WMM2020 GeomagnetismLibrary.c
 // expects xyz in cartesian units earth-semimajor-axis
@@ -1608,156 +1669,101 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 	fragColor = phiLambdaHeightBMag;
 }
 ]],
-				uniforms = {
-					dt = 0,
-					dparam = dparam,
-					texHeight = #startCoords,
-					fieldLinePosTex = 0,
-				},
+			uniforms = {
+				dt = 0,
+				dparam = dparam,
+				texHeight = #startCoords,
+				fieldLinePosTex = 0,
 			},
-			geometry = self.quadGeom,
-			texs = {fieldLinePosTex},
-		}
-
-		--local readbuffer = ffi.new('int[1]')
-		--gl.glGetIntegerv(gl.GL_READ_BUFFER, readbuffer)
-		--print('current bound read buffer', readbuffer[0])	-- gl.GL_BACK by default, even in GLES
-
-		--timer('integrating on GPU', function()
-		fbo:bind()
-			:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
-		local res, err = fbo.check()
-		if not res then print(err) end
-		gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT0)
-		
-		-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
-		-- (TODO store a current-state tex separately?)
-		for i=1,maxiter-1 do
-			-- draw from fieldLinePosTex into fieldLineVtxsTex
-			gl.glViewport(i, 0, 1, self.fieldLineVtxsTex.height)
-			calcFieldLineVtxsTexSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
-			calcFieldLineVtxsTexSceneObj:draw()
-
-			fieldLinePosTex:bind()
-			gl.glCopyTexSubImage2D(fieldLinePosTex.target, 0, 0, 0, i, 0, 1, self.fieldLineVtxsTex.height)
-			fieldLinePosTex:unbind()
-		end
-		--end)	-- "...done integrating on GPU (0.00076794624328613s)" ... verrry quick
-		fbo:unbind()
-		gl.glReadBuffer(gl.GL_BACK)
-
-		-- [===[ copy from tex to array buffer with PBO's and glReadPixels from the FBO attached to the Tex to copy (smh...)
-		-- library design fallacy, unlike textures, the same gl buffer can be bound to various targets
-		self.fieldLineVertexBuf = require 'gl.pixelpackbuffer'{
-			size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
-			type = gl.GL_FLOAT,
-			count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
-			dim = 4,
-			mode = gl.GL_STATIC_DRAW,
-		}
-
-		fbo:bind()
-		fbo:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
-		local res, err = fbo.check()
-		if not res then print(err) end
-
-		gl.glViewport(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height)
-		-- read from bound FBO (attached to tex) to PBO (attached to buffer)
-		gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
-		fbo:unbind()
-		self.fieldLineVertexBuf:unbind()
-
-		-- and now the PBO buffer can be treated as an array buffer...so...
-		--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
-		-- don't just change the target, change the class, so the sceneobject vertexes class-detect will auto-assign it to .buffer
-		setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
-		--self.fieldLineVertexBuf:bind():unbind()
-		--]===]
-		--[===[ how about unpack buffer + texsubimage ?
-		self.fieldLineVertexBuf = require 'gl.pixelunpackbuffer'{
-			size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
-			type = gl.GL_FLOAT,
-			count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
-			dim = 4,
-			mode = gl.GL_DYNAMIC_DRAW,--gl.GL_STATIC_DRAW,
-		}
-		self.fieldLineVtxsTex
-			:bind()
-			:subimage{x=0, y=0, width=self.fieldLineVtxsTex.width, height=self.fieldLineVtxsTex.height, format=gl.GL_RGBA, type=gl.GL_FLOAT, data=ffi.cast('void*', 0)}
-			:unbind()
-		self.fieldLineVertexBuf:unbind()
-		--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
-		-- don't just change the target, change the class, so the sceneobject vertexes class-detect will auto-assign it to .buffer
-		setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
-		--]===]
-
-		local geometries = table()
-		for i=0,#startCoords-1 do
-			geometries:insert{
-				mode = gl.GL_LINE_STRIP,
-				count = maxiter,
-				offset = i * maxiter,
-			}
-		end
-		
-		self.fieldLineSceneObj = GLSceneObject{
-			program = fieldLineShader,
-			vertexes = self.fieldLineVertexBuf,
-			geometries = geometries,
-		}
-glreport'here'
-	end)
-	
-	--gl.glEnable(gl.GL_CULL_FACE)
-	gl.glEnable(gl.GL_DEPTH_TEST)
-	gl.glEnable(gl.GL_BLEND)
-	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
-end
-
-function App:updateArrowTex()
-	-- whenever lat/lon are resized, just rebuild this
-	-- technically you could even do it on the GPU as a GPU pass ...
-	-- just 1) unravel the texcoord to 1D index
-	-- then 2) ... well the inverse map of the sum of ceil(londim * cos(phi)) is a bit tricky ...
-	local arrowCoords = vector'vec2f_t'
-	local londim = guivars.arrowLonDim
-	local latdim = guivars.arrowLatDim
-	for j=0,latdim-1 do
-		local v = (j + .5) / latdim
-		local lat = (v * 2 - 1) * 90
-		local phi = math.rad(lat)
-
-		local thislondim = guivars.arrowEvenDistribute
-			and math.max(1, math.ceil(londim * math.cos(phi)))
-			or londim
-		for i=0,thislondim-1 do
-			local u = (i + .5) / thislondim
-			local lon = (u * 2 - 1) * 180
-			local lambda = math.rad(lon)
-			arrowCoords:emplace_back()[0]:set(u, v)
-		end
-	end
-	local arrowTexSize = math.ceil(math.sqrt(#arrowCoords))
-	arrowCoords:reserve(arrowTexSize * arrowTexSize)
-
-	local arrowCoordTex = GLTex2D{
-		internalFormat = gl.GL_RG32F,
-		width = arrowTexSize,
-		height = arrowTexSize,
-		format = gl.GL_RG,
-		type = gl.GL_FLOAT,
-		minFilter = gl.GL_NEAREST,
-		magFilter = gl.GL_NEAREST,
-		wrap = {
-			s = gl.GL_REPEAT,
-			t = gl.GL_REPEAT,
 		},
-		data = arrowCoords.v,
-	}:unbind()
+		geometry = self.quadGeom,
+		texs = {fieldLinePosTex},
+	}
 
-	self.arrowFieldSceneObj.geometry.instanceCount = #arrowCoords
-	self.arrowFieldSceneObj.uniforms.arrowTexSize = arrowTexSize
-	self.arrowFieldSceneObj.texs[1] = arrowCoordTex
+	--timer('integrating on GPU', function()
+	self.fbo:bind()
+		:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
+	local res, err = self.fbo.check()
+	if not res then print(err) end
+	gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT0)
+	
+	-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
+	-- (TODO store a current-state tex separately?)
+	for i=1,maxiter-1 do
+		-- draw from fieldLinePosTex into fieldLineVtxsTex
+		gl.glViewport(i, 0, 1, self.fieldLineVtxsTex.height)
+		self.integrateFieldLinesSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
+		self.integrateFieldLinesSceneObj:draw()
+
+		fieldLinePosTex:bind()
+		gl.glCopyTexSubImage2D(fieldLinePosTex.target, 0, 0, 0, i, 0, 1, self.fieldLineVtxsTex.height)
+		fieldLinePosTex:unbind()
+	end
+	--end)	-- "...done integrating on GPU (0.00076794624328613s)" ... verrry quick
+	self.fbo:unbind()
+	gl.glReadBuffer(gl.GL_BACK)
+
+	-- [===[ copy from tex to array buffer with PBO's and glReadPixels from the FBO attached to the Tex to copy (smh...)
+	-- library design fallacy, unlike textures, the same gl buffer can be bound to various targets
+	self.fieldLineVertexBuf = require 'gl.pixelpackbuffer'{
+		size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
+		type = gl.GL_FLOAT,
+		count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
+		dim = 4,
+		mode = gl.GL_STATIC_DRAW,
+	}
+
+	self.fbo:bind()
+	self.fbo:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
+	local res, err = self.fbo.check()
+	if not res then print(err) end
+
+	gl.glViewport(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height)
+	-- read from bound FBO (attached to tex) to PBO (attached to buffer)
+	gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
+	self.fbo:unbind()
+	self.fieldLineVertexBuf:unbind()
+
+	-- and now the PBO buffer can be treated as an array buffer...so...
+	--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
+	-- don't just change the target, change the class, so the sceneobject vertexes class-detect will auto-assign it to .buffer
+	setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
+	--self.fieldLineVertexBuf:bind():unbind()
+	--]===]
+	--[===[ how about unpack buffer + texsubimage ?
+	self.fieldLineVertexBuf = require 'gl.pixelunpackbuffer'{
+		size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
+		type = gl.GL_FLOAT,
+		count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
+		dim = 4,
+		mode = gl.GL_DYNAMIC_DRAW,--gl.GL_STATIC_DRAW,
+	}
+	self.fieldLineVtxsTex
+		:bind()
+		:subimage{x=0, y=0, width=self.fieldLineVtxsTex.width, height=self.fieldLineVtxsTex.height, format=gl.GL_RGBA, type=gl.GL_FLOAT, data=ffi.cast('void*', 0)}
+		:unbind()
+	self.fieldLineVertexBuf:unbind()
+	--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
+	-- don't just change the target, change the class, so the sceneobject vertexes class-detect will auto-assign it to .buffer
+	setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
+	--]===]
+
+	local geometries = table()
+	for i=0,#startCoords-1 do
+		geometries:insert{
+			mode = gl.GL_LINE_STRIP,
+			count = maxiter,
+			offset = i * maxiter,
+		}
+	end
+	
+	self.fieldLineSceneObj = GLSceneObject{
+		program = self.fieldLineShader,
+		vertexes = self.fieldLineVertexBuf,
+		geometries = geometries,
+	}
+glreport'here'
+
 end
 
 local function degmintofrac(deg, min, sec)
@@ -1988,6 +1994,14 @@ function App:updateGUI()
 	or ig.luatableCheckbox('arrows even distribute', guivars, 'arrowEvenDistribute')
 	then
 		self:updateArrowTex()
+	end
+	
+	if ig.luatableInputFloat('field line init altitude', guivars, 'fieldLineHeight')	-- techniically this should just trigger a re-integration, not a realloc
+	or ig.luatableInputInt('field line lat dim', guivars, 'fieldLineLatDim')
+	or ig.luatableInputInt('field line lon dim', guivars, 'fieldLineLonDim')
+	or ig.luatableCheckbox('field lines even distribute', guivars, 'fieldLineEvenDistribute')
+	then
+		self:updateFieldLines()
 	end
 
 	-- how linear are the g and h coeffs?
