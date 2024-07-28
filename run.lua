@@ -1499,15 +1499,10 @@ void main() {
 			fieldLineVtxsTex = 1,
 		},
 	}:useNone()
-
-
+	
+	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 
 	self:updateFieldLines()
-	
-	--gl.glEnable(gl.GL_CULL_FACE)
-	gl.glEnable(gl.GL_DEPTH_TEST)
-	gl.glEnable(gl.GL_BLEND)
-	gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 end
 
 function App:updateArrowTex()
@@ -1641,12 +1636,12 @@ print('# field line start coords', #self.startCoords)
 	}:unbind()
 
 	-- copy from tex to array buffer with PBO's and glReadPixels from the FBO attached to the Tex to copy (smh...)
-	self.fieldLineVertexBuf = require 'gl.arraybuffer'{
+	self.fieldLineVertexBuf = GLArrayBuffer{
 		size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
 		type = gl.GL_FLOAT,
 		count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
 		dim = 4,
-		mode = gl.GL_STATIC_DRAW,
+		mode = gl.GL_STREAM_DRAW,--gl.GL_STATIC_DRAW,
 	}:unbind()
 	
 	self.fieldLineSceneObj = GLSceneObject{
@@ -1667,29 +1662,8 @@ end
 -- if fieldDT changes then reintegrate
 -- TODO fieldLineHeight ... but that'd mean repopulating the initial z channel
 function App:integrateFieldLines()
-
-	-- make sure the leftmost col of the VtxsTex is initialized
-	-- TODO it should already be
-	-- TODO then use this to initialize fieldLinePosTex
-	self.fieldLineVtxsTex
-	:bind()
-	:subimage{		-- upload initial state as a vertical strip
-		width = 1,
-		height = #self.startCoords,
-		format = gl.GL_RGBA,
-		type = gl.GL_FLOAT,
-		data = self.startCoords.v,
-	}
-	:unbind()
-
-	self.fieldLinePosTex
-	:bind()
-	:subimage{
-		format = gl.GL_RGBA,
-		type = gl.GL_FLOAT,
-		data = self.startCoords.v,
-	}
-	:unbind()
+	gl.glDisable(gl.GL_DEPTH_TEST)
+	gl.glDisable(gl.GL_BLEND)
 
 	-- do the integration using FBO's onto our texture
 
@@ -1700,11 +1674,16 @@ function App:integrateFieldLines()
 	if not res then print(err) end
 	gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT0)
 	
-	self.fieldLinePosTex:bind()
 	self.integrateFieldLinesSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
 	self.integrateFieldLinesSceneObj.uniforms.dt = guivars.fieldDT
 	self.integrateFieldLinesSceneObj.uniforms.dparam = guivars.fieldLineIntStep
 	self.integrateFieldLinesSceneObj.uniforms.texHeight = self.fieldLineVtxsTex.height	-- #startCoords
+	
+	self.fieldLinePosTex:bind()
+	-- copy the initial states in fieldLinePosTex to the first column of fieldLineVtxsTex
+	gl.glViewport(0, 0, 1, self.fieldLineVtxsTex.height)
+	gl.glCopyTexSubImage2D(self.fieldLinePosTex.target, 0, 0, 0, 0, 0, 1, self.fieldLineVtxsTex.height)
+	
 	-- now iteratively draw to FBO next strip over, reading from the current state strip as we go
 	-- (TODO store a current-state tex separately?)
 	for i=1,guivars.fieldLineIter-1 do
@@ -1741,16 +1720,20 @@ function App:integrateFieldLines()
 	--[===[ using pixel-unpack + texsubimage ?
 	self.fieldLineVertexBuf.target = gl.GL_PIXEL_UNPACK_BUFFER
 	self.fieldLineVertexBuf:bind()
-	self.fieldLineVtxsTex
-		:bind()
-		:subimage{x=0, y=0, width=self.fieldLineVtxsTex.width, height=self.fieldLineVtxsTex.height, format=gl.GL_RGBA, type=gl.GL_FLOAT, data=ffi.cast('void*', 0)}
-		:unbind()
+	--self.fieldLineVtxsTex
+	--	:bind()
+	--	:subimage{x=0, y=0, width=self.fieldLineVtxsTex.width, height=self.fieldLineVtxsTex.height, format=gl.GL_RGBA, type=gl.GL_FLOAT, data=ffi.cast('void*', 0)}
+	--	:unbind()
+	gl.glBindTexture(gl.GL_TEXTURE_2D, self.fieldLineVertexBuf.id)
+	gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
+	gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 	self.fieldLineVertexBuf:unbind()
 	self.fieldLineVertexBuf.target = nil	-- clear it / reset to default GL_ARRAY_BUFFER
 	--]===]
 
-
 glreport'here'
+	gl.glEnable(gl.GL_DEPTH_TEST)
+	gl.glEnable(gl.GL_BLEND)
 end
 
 local function degmintofrac(deg, min, sec)
