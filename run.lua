@@ -1702,7 +1702,7 @@ function App:integrateFieldLines()
 	self.fieldLineVertexBuf:bind(gl.GL_PIXEL_PACK_BUFFER)
 	gl.glViewport(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height)
 	-- read from bound FBO (attached to tex) to PBO (attached to buffer)
-	gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
+	gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, nil)
 	self.fieldLineVertexBuf:unbind(gl.GL_PIXEL_PACK_BUFFER)
 
 	self.fbo:unbind()
