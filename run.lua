@@ -14,6 +14,7 @@ local matrix_ffi = require 'matrix.ffi'
 local template = require 'template'
 local class = require 'ext.class'
 local table = require 'ext.table'
+local range = require 'ext.range'
 local string = require 'ext.string'
 local path = require 'ext.path'
 local glreport = require 'gl.report'
@@ -1438,6 +1439,7 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 			},
 		},
 		geometry = self.quadGeom,
+		--texs = {self.fieldLinePosTex},	-- but don't set it here, do it in the render loop
 	}
 	
 	-- draw field lines
@@ -1569,7 +1571,7 @@ how to build the field lines on the GPU ...
 3) copy the fbo tex to an array buffer, and use it as a bunch of line strip vertexes
 --]]
 
-	local startCoords = vector'vec4f_t'
+	self.startCoords = vector'vec4f_t'
 	-- try to draw magnetic field lines ...
 	for j=0,latdim-1 do
 		local v = (j + .5) / latdim
@@ -1590,11 +1592,11 @@ how to build the field lines on the GPU ...
 
 			for sign=1,2 do
 				-- assert here that every other startCoords is going to integrate + - + - ...
-				startCoords:emplace_back()[0]:set(phi, lambda, height0, Bmag)
+				self.startCoords:emplace_back()[0]:set(phi, lambda, height0, Bmag)
 			end
 		end
 	end
-print('# field line start coords', #startCoords)
+print('# field line start coords', #self.startCoords)
 	
 	-- perform integration on the GPU ...
 
@@ -1603,7 +1605,7 @@ print('# field line start coords', #startCoords)
 	self.fieldLinePosTex = GLTex2D{
 		internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
 		width = 1,			-- 1D along height for blitting's sake 
-		height = #startCoords,
+		height = #self.startCoords,
 		format = gl.GL_RGBA,
 		type = gl.GL_FLOAT,
 		minFilter = gl.GL_NEAREST,
@@ -1612,7 +1614,7 @@ print('# field line start coords', #startCoords)
 			s = gl.GL_REPEAT,
 			t = gl.GL_REPEAT,
 		},
-		data = startCoords.v,
+		data = self.startCoords.v,
 	}:unbind()
 
 	-- use a fbo to integrate / generate our field line positions
@@ -1621,7 +1623,7 @@ print('# field line start coords', #startCoords)
 	self.fieldLineVtxsTex = GLTex2D{
 		internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
 		width = guivars.fieldLineIter,
-		height = #startCoords,
+		height = #self.startCoords,
 		format = gl.GL_RGBA,
 		type = gl.GL_FLOAT,
 		minFilter = gl.GL_NEAREST,
@@ -1632,17 +1634,13 @@ print('# field line start coords', #startCoords)
 		},
 	}:subimage{		-- upload initial state as a vertical strip
 		width = 1,
-		height = #startCoords,
+		height = #self.startCoords,
 		format = gl.GL_RGBA,
 		type = gl.GL_FLOAT,
-		data = startCoords.v,
+		data = self.startCoords.v,
 	}:unbind()
 
-	self.integrateFieldLinesSceneObj.texs[1] = self.fieldLinePosTex
-
-	-- [===[ copy from tex to array buffer with PBO's and glReadPixels from the FBO attached to the Tex to copy (smh...)
-	-- library design fallacy, unlike textures, the same gl buffer can be bound to various targets
-	-- but for GLSceneObject ctor's sake, make sure it's a GLArrayBuffer
+	-- copy from tex to array buffer with PBO's and glReadPixels from the FBO attached to the Tex to copy (smh...)
 	self.fieldLineVertexBuf = require 'gl.arraybuffer'{
 		size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
 		type = gl.GL_FLOAT,
@@ -1651,19 +1649,16 @@ print('# field line start coords', #startCoords)
 		mode = gl.GL_STATIC_DRAW,
 	}:unbind()
 	
-	local geometries = table()
-	for i=0,#startCoords-1 do
-		geometries:insert{
-			mode = gl.GL_LINE_STRIP,
-			count = guivars.fieldLineIter,
-			offset = i * guivars.fieldLineIter,
-		}
-	end
-
 	self.fieldLineSceneObj = GLSceneObject{
 		program = self.fieldLineShader,
 		vertexes = self.fieldLineVertexBuf,
-		geometries = geometries,
+		geometries = range(0,#self.startCoords-1):mapi(function(i)
+			return {
+				mode = gl.GL_LINE_STRIP,
+				count = guivars.fieldLineIter,
+				offset = i * guivars.fieldLineIter,
+			}
+		end),
 	}
 
 	self:integrateFieldLines()
@@ -1672,6 +1667,29 @@ end
 -- if fieldDT changes then reintegrate
 -- TODO fieldLineHeight ... but that'd mean repopulating the initial z channel
 function App:integrateFieldLines()
+
+	-- make sure the leftmost col of the VtxsTex is initialized
+	-- TODO it should already be
+	-- TODO then use this to initialize fieldLinePosTex
+	self.fieldLineVtxsTex
+	:bind()
+	:subimage{		-- upload initial state as a vertical strip
+		width = 1,
+		height = #self.startCoords,
+		format = gl.GL_RGBA,
+		type = gl.GL_FLOAT,
+		data = self.startCoords.v,
+	}
+	:unbind()
+
+	self.fieldLinePosTex
+	:bind()
+	:subimage{
+		format = gl.GL_RGBA,
+		type = gl.GL_FLOAT,
+		data = self.startCoords.v,
+	}
+	:unbind()
 
 	-- do the integration using FBO's onto our texture
 
@@ -1682,6 +1700,7 @@ function App:integrateFieldLines()
 	if not res then print(err) end
 	gl.glReadBuffer(gl.GL_COLOR_ATTACHMENT0)
 	
+	self.fieldLinePosTex:bind()
 	self.integrateFieldLinesSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
 	self.integrateFieldLinesSceneObj.uniforms.dt = guivars.fieldDT
 	self.integrateFieldLinesSceneObj.uniforms.dparam = guivars.fieldLineIntStep
@@ -1692,19 +1711,21 @@ function App:integrateFieldLines()
 		-- draw from fieldLinePosTex into fieldLineVtxsTex
 		gl.glViewport(i, 0, 1, self.fieldLineVtxsTex.height)
 		self.integrateFieldLinesSceneObj:draw()
-
-		self.fieldLinePosTex:bind()
+		-- copy from fbo fieldLineVtxsTex back into fieldLinePosTex for the next iteration
 		gl.glCopyTexSubImage2D(self.fieldLinePosTex.target, 0, 0, 0, i, 0, 1, self.fieldLineVtxsTex.height)
-		self.fieldLinePosTex:unbind()
 	end
+	-- final pass, copy the initial state back into fieldLinePosTex, so the next integration pass will use it as the initial state
+	gl.glCopyTexSubImage2D(self.fieldLinePosTex.target, 0, 0, 0, 0, 0, 1, self.fieldLineVtxsTex.height)
+
+	self.fieldLinePosTex:unbind()
 	--end)	-- "...done integrating on GPU (0.00076794624328613s)" ... verrry quick
 	self.fbo:unbind()
 	gl.glReadBuffer(gl.GL_BACK)
 
 	-- now use a PBO to copy the tex into a vertex attribute
 
-	self.fieldLineVertexBuf.target = gl.GL_PIXEL_PACK_BUFFER
-	self.fieldLineVertexBuf:bind()
+	-- [===[ using pixel-pack and readpixels ... and a fbo...
+	self.fieldLineVertexBuf:bind(gl.GL_PIXEL_PACK_BUFFER)
 
 	self.fbo:bind()
 	self.fbo:setColorAttachmentTex2D(self.fieldLineVtxsTex.id)
@@ -1715,31 +1736,17 @@ function App:integrateFieldLines()
 	-- read from bound FBO (attached to tex) to PBO (attached to buffer)
 	gl.glReadPixels(0, 0, self.fieldLineVtxsTex.width, self.fieldLineVtxsTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
 	self.fbo:unbind()
-	self.fieldLineVertexBuf:unbind()
-
-	-- and now the PBO buffer can be treated as an array buffer...so...
-	--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
-	-- don't just change the target, change the class, so the sceneobject vertexes class-detect will auto-assign it to .buffer
-	--setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
-	--self.fieldLineVertexBuf:bind():unbind()
-	self.fieldLineVertexBuf.target = nil	-- clear it / reset to default GL_ARRAY_BUFFER
+	self.fieldLineVertexBuf:unbind(gl.GL_PIXEL_PACK_BUFFER)
 	--]===]
-	--[===[ how about unpack buffer + texsubimage ?
-	self.fieldLineVertexBuf = require 'gl.pixelunpackbuffer'{
-		size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
-		type = gl.GL_FLOAT,
-		count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
-		dim = 4,
-		mode = gl.GL_DYNAMIC_DRAW,--gl.GL_STATIC_DRAW,
-	}
+	--[===[ using pixel-unpack + texsubimage ?
+	self.fieldLineVertexBuf.target = gl.GL_PIXEL_UNPACK_BUFFER
+	self.fieldLineVertexBuf:bind()
 	self.fieldLineVtxsTex
 		:bind()
 		:subimage{x=0, y=0, width=self.fieldLineVtxsTex.width, height=self.fieldLineVtxsTex.height, format=gl.GL_RGBA, type=gl.GL_FLOAT, data=ffi.cast('void*', 0)}
 		:unbind()
 	self.fieldLineVertexBuf:unbind()
-	--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
-	-- don't just change the target, change the class, so the sceneobject vertexes class-detect will auto-assign it to .buffer
-	setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
+	self.fieldLineVertexBuf.target = nil	-- clear it / reset to default GL_ARRAY_BUFFER
 	--]===]
 
 
@@ -1993,6 +2000,10 @@ function App:updateGUI()
 	-- can I just factor out the dt?
 	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
 	if ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', -50, 50) then
+		self:integrateFieldLines()
+	end
+
+	if ig.igButton'reintegrate' then
 		self:integrateFieldLines()
 	end
 end
