@@ -1679,7 +1679,7 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 		end)
 --]==]
 
--- [==[ upload with cpu copy
+--[==[ upload with cpu copy
 		local vertexes = table()
 		local geometries = table()
 
@@ -1720,13 +1720,12 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 			geometries = geometries,
 		}
 --]==]
---[==[ set vertexes via gpu
+-- [==[ set vertexes via gpu
 	
-
-		--[===[ can't seem to get pbos to work ....
+		-- [===[ can't seem to get pbos to work ....
 		-- library design fallacy, unlike textures, the same gl buffer can be bound to various targets
 		self.fieldLineVertexBuf = require 'gl.pixelpackbuffer'{
-			--[[
+			-- [[
 			size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
 			type = gl.GL_FLOAT,
 			count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
@@ -1734,6 +1733,7 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 			mode = gl.GL_DYNAMIC_DRAW,--gl.GL_STATIC_DRAW,
 			--]]
 		}
+		--[[
 		gl.glBufferData(gl.GL_PIXEL_PACK_BUFFER, self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4, nil, gl.GL_DYNAMIC_DRAW)
 		--self.fieldLineVertexBuf:unbind()
 		-- assign afterwards or the class will allocate filler
@@ -1743,6 +1743,7 @@ cartesianPos = vec3(cartesianPos.z, cartesianPos.x, cartesianPos.y);	// undo xfo
 		self.fieldLineVertexBuf.dim = 4
 		self.fieldLineVertexBuf.mode = gl.GL_DYNAMIC_DRAW
 		--self.fieldLineVertexBuf.mode = gl.GL_STATIC_DRAW
+		--]]
 
 glreport'here'
 		fbo:bind()
@@ -1764,8 +1765,27 @@ glreport'here'
 glreport'here'
 
 		-- and now the PBO buffer can be treated as an array buffer...so...
-		self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
+		--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
+		-- don't just change the target, change the class, so the sceneobject vertexes class-detect will auto-assign it to .buffer
+		setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
 		--self.fieldLineVertexBuf:bind():unbind()
+		--]===]
+		--[===[ how about unpack buffer + texsubimage
+		self.fieldLineVertexBuf = require 'gl.pixelunpackbuffer'{
+			size = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height * 4 * 4,	-- sizeof(float) * 4 components
+			type = gl.GL_FLOAT,
+			count = self.fieldLineVtxsTex.width * self.fieldLineVtxsTex.height,
+			dim = 4,
+			mode = gl.GL_DYNAMIC_DRAW,--gl.GL_STATIC_DRAW,
+		}
+		self.fieldLineVtxsTex
+			:bind()
+			:subimage{x=0, y=0, width=self.fieldLineVtxsTex.width, height=self.fieldLineVtxsTex.height, format=gl.GL_RGBA, type=gl.GL_FLOAT, data=ffi.cast('void*', 0)}
+			:unbind()
+		self.fieldLineVertexBuf:unbind()
+		--self.fieldLineVertexBuf.target = gl.GL_ARRAY_BUFFER
+		-- don't just change the target, change the class, so the sceneobject vertexes class-detect will auto-assign it to .buffer
+		setmetatable(self.fieldLineVertexBuf, require 'gl.arraybuffer')
 		--]===]
 
 		local geometries = table()
@@ -1779,12 +1799,14 @@ glreport'here'
 		
 		self.fieldLineSceneObj = GLSceneObject{
 			program = fieldLineShader,
-			--vertexes = self.fieldLineVertexBuf,
+			vertexes = self.fieldLineVertexBuf,
 			geometries = geometries,
+			--[[
 			uniforms = {
 				fieldLineVtxsTexWidth = self.fieldLineVtxsTex.width,
 				fieldLineVtxsTexHeight = self.fieldLineVtxsTex.height,
 			},
+			--]]
 		}
 glreport'here'
 --]==]
