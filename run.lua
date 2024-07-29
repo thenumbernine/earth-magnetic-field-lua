@@ -360,8 +360,6 @@ for i,stat in ipairs(BStat) do stat.onlyFinite = true end
 local londim -- dimension in 2D x dir / spherical phi / globe lambda dir
 local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
 
-local BTex
-local B2Tex
 local earthtex
 
 local App = require 'imguiapp.withorbit'()
@@ -618,7 +616,7 @@ for chartIndex,c in ipairs(charts) do
 				program = shader,
 				vertexes = self.vertexBuf,
 				geometries = geometries,
-				texs = {earthtex, gradTex, BTex, B2Tex},
+				texs = {earthtex, gradTex},
 			}
 		end
 
@@ -682,11 +680,15 @@ function App:initGL(...)
 	local londim = js and 144 or 1440
 	local latdim = js and 72 or 720
 
+	-- fbo is used for stats calcs and for field line integration
 	self.fbo = GLFBO()
 		:unbind()
 glreport'here'
 
-	self.quadGeomVertexCode = [[
+	self.quadGeomVertexShader = GLProgram.VertexShader{
+		version = 'latest',
+		precision = 'best',
+		code = [[
 layout(location=0) in vec2 vertex;
 out vec2 texcoordv;
 uniform mat4 mvProjMat;
@@ -694,7 +696,8 @@ void main() {
 	texcoordv = vertex;
 	gl_Position = mvProjMat * vec4(vertex, 0., 1.);
 }
-]]
+]],
+	}
 
 	local BData = ffi.new('vec4f_t[?]', londim * latdim)
 	local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
@@ -749,7 +752,7 @@ print"...done calculating basis"
 glreport'here'
 --]]
 
-		BTex = GLTex2D{
+		local BTex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
@@ -768,7 +771,7 @@ glreport'here'
 			program = {
 				version = 'latest',
 				precision = 'best',
-				vertexCode = self.quadGeomVertexCode,
+				shaders = {self.quadGeomVertexShader},
 				fragmentCode = [[
 uniform float dt;
 ]]..self.calc_b_shader..template[[
@@ -826,7 +829,7 @@ glreport'here'
 -- [=[ hmm, better way than copy paste?
 
 	timer('generating div B and curl B', function()
-		B2Tex = GLTex2D{
+		local B2Tex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
@@ -841,32 +844,14 @@ glreport'here'
 		}:unbind()
 glreport'here'
 
-		local calcB2SceneObj = GLSceneObject{
-			program = {
-				version = 'latest',
-				precision = 'best',
-				vertexCode = self.quadGeomVertexCode,
-				fragmentCode = [[
-uniform float dt;
-]]..self.calc_b_shader..template([[
-
-#define M_PI <?=('%.49f'):format(math.pi)?>
-
-#define latdim	<?=clnumber(latdim)?>
-#define londim	<?=clnumber(londim)?>
-
-vec3 dphi = vec3(M_PI / londim, 0., 0.);
-vec3 dlambda = vec3(0., 2. * M_PI / latdim, 0.);
-vec3 dheight = vec3(0., 0., 1000.);
-
-in vec2 texcoordv;
-out vec4 fragColor;
-
-void main() {
-	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
-	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
-
-	vec3 plh = vec3(phi, lambda, 0.);
+		-- module depends M_PI, uniform vec2 latLonDim
+		self.calcB2Code = [[
+vec4 calcB2(vec3 plh) {
+	float latdim = latLonDim.x;
+	float londim = latLonDim.y;
+	vec3 dphi = vec3(M_PI / londim, 0., 0.);
+	vec3 dlambda = vec3(0., 2. * M_PI / latdim, 0.);
+	vec3 dheight = vec3(0., 0., 1000.);
 
 	// TODO units anyone?
 	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / dphi.x / (wgs84_a * 1e+3 * cos(plh.x));
@@ -882,20 +867,45 @@ void main() {
 		dphi_B.y - dlambda_B.x
 	);
 
-	fragColor = vec4(
+	return vec4(
 		div_B,
 		div2D_B,
 		curl_B.z,
 		length(curl_B)
 	);
 }
-]],				{
-					latdim = latdim,
-					londim = londim,
-					clnumber = clnumber,
-				}),
+]]
+
+		local calcB2SceneObj = GLSceneObject{
+			program = {
+				version = 'latest',
+				precision = 'best',
+				shaders = {self.quadGeomVertexShader},
+				fragmentCode = [[
+
+uniform float dt;
+
+]]..self.calc_b_shader..[[
+
+#define M_PI ]]..('%.49f'):format(math.pi)..[[
+
+// used in (d/dphi, d/dlambda) finite-difference resolution
+uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
+
+]]..self.calcB2Code..[[
+
+in vec2 texcoordv;
+out vec4 fragColor;
+
+void main() {
+	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
+	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
+	fragColor = calcB2(vec3(phi, lambda, 0.));
+}
+]],
 				uniforms = {
 					dt = 0,
+					latLonDim = {latdim, londim},
 				},
 			},
 			geometry = self.quadGeom,
@@ -1043,11 +1053,17 @@ void main() {
 			precision = 'best',
 			vertexCode = overlayVertexCode,
 			fragmentCode = [[
+
 uniform float dt;
+
 ]]..self.calc_b_shader..template([[
 
-// TODO if you use tex then at the very pole there is a numeric artifact ...
-#define CALC_B_ON_GPU
+#define M_PI <?=('%.49f'):format(math.pi)?>
+
+// used in (d/dphi, d/dlambda) finite-difference resolution
+uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
+
+]]..self.calcB2Code..[[
 
 #define BMagMin <?=clnumber(BStat.mag.min)?>
 #define BMagMax <?=clnumber(BStat.mag.max)?>
@@ -1068,14 +1084,10 @@ uniform float dt;
 #define BCurlMagMin <?=clnumber(BStat.curlMag.min)?>
 #define BCurlMagMax <?=clnumber(BStat.curlMag.max)?>
 
-#define M_PI <?=('%.49f'):format(math.pi)?>
-
 in vec2 texcoordv;
 out vec4 fragColor;
 
 uniform sampler2D earthTex;
-uniform sampler2D BTex;
-uniform sampler2D B2Tex;
 uniform sampler2D gradTex;
 uniform float alpha;
 uniform float gradScale;
@@ -1084,17 +1096,13 @@ void main() {
 	float s = .5;
 	float hsvBlend = .5;
 
-	vec4 B2 = texture(B2Tex, texcoordv);
-#ifndef CALC_B_ON_GPU
-	vec4 B = texture(BTex, texcoordv);
-#else
 	vec3 plh = vec3(
 		(texcoordv.y - .5) * M_PI,			//phi
 		(texcoordv.x - .5) * 2. * M_PI,		//lambda
 		0.
 	);
 	vec3 B = calcB(plh);
-#endif
+	vec4 B2 = calcB2(plh);
 
 	<?=overlay.code?>
 
@@ -1114,8 +1122,6 @@ void main() {
 			uniforms = table({
 				earthTex = 0,
 				gradTex = 1,
-				BTex = 2,
-				B2Tex = 3,
 				alpha = 1,
 				dt = 0,
 			}, chartCNames:mapi(function(name,j)
@@ -1339,7 +1345,7 @@ void main() {
 		program = {
 			version = 'latest',
 			precision = 'best',
-			vertexCode = self.quadGeomVertexCode,
+			shaders = {self.quadGeomVertexShader},
 			fragmentCode = chartCode
 ..[[
 uniform float dt;
