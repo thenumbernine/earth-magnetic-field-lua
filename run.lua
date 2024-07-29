@@ -652,7 +652,7 @@ function App:initGL(...)
 		grad.tex = grad:gen()
 	end
 
-	self.calc_b_shader = template(assert(path'calc_b.shader':read()), {
+	self.calcBCode = template(assert(path'calc_b.shader':read()), {
 		wgs84 = wgs84,
 		wmm = wmm,
 	})
@@ -699,153 +699,10 @@ void main() {
 ]],
 	}
 
-	local BData = ffi.new('vec4f_t[?]', londim * latdim)
-	local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
-	timer('generating B field', function()
-		-- can be arbitrary
-		-- but the WMM model is for 15 mins, so [360,180] x4
+	local piDef = '#define M_PI '..('%.49f'):format(math.pi)
 
-		-- while we're here, generate the basis tex
-		-- i've only got a script implementation for it for now
-		-- but i could generate a GLSL one from the expressions ...
---[[
-require 'vec-ffi.quatf'
-		local basisTexData = ffi.new('quatf_t[?]', londim * latdim)
-print"calculating basis..."
-		for _,chart in ipairs(charts) do
-			local index = 0
-			for j=0,latdim-1 do
-				local v = (j + .5) / latdim
-				local lat = (v * 2 - 1) * 90
-				local phi = math.rad(lat)
-
-				for i=0,londim-1 do
-					local u = (i + .5) / londim
-					local lon = (u * 2 - 1) * 180
-					local lambda = math.rad(lon)
-
-					local ex, ey, ez = chart:basis(phi, lambda, 0)
---DEBUG:require 'ext.assert'.ge(ex:cross(ey):dot(ez), .9)
-					basisTexData[index]:fromMatrix{ex, ey, ez}:normalize()
-					index = index + 1
-				end
-			end
-
-			chart.basisTex = GLTex2D{
-				internalFormat = gl.GL_RGBA32F,
-				width = londim,
-				height = latdim,
-				format = gl.GL_RGBA,
-				type = gl.GL_FLOAT,
-				minFilter = gl.GL_LINEAR,
-				magFilter = gl.GL_NEAREST,
-				wrap = {
-					s = gl.GL_REPEAT,
-					t = gl.GL_REPEAT,
-				},
-				data = basisTexData,
-				generateMipmap = true,
-			}:unbind()
-			chart.basisTex.data = nil	-- don't keep track of it since we're reusing this buffer
-		end
-print"...done calculating basis"
-glreport'here'
---]]
-
-		local BTex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,
-			width = londim,
-			height = latdim,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}:unbind()
-glreport'here'
-
-		local calcBSceneObj = GLSceneObject{
-			program = {
-				version = 'latest',
-				precision = 'best',
-				shaders = {self.quadGeomVertexShader},
-				fragmentCode = [[
-uniform float dt;
-]]..self.calc_b_shader..template[[
-
-#define M_PI <?=('%.49f'):format(math.pi)?>
-
-in vec2 texcoordv;
-out vec4 fragColor;
-void main() {
-	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
-	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
-	vec3 B = calcB(vec3(phi, lambda, 0.));
-	fragColor = vec4(B, 1.);
-}
-]],
-				uniforms = {
-					dt = 0,
-				},
-			},
-			geometry = self.quadGeom,
-		}
-
-		-- BData / B2Data is only used for stat computation
-		self.fbo:draw{
-			viewport = {0, 0, londim, latdim},
-			dest = BTex,
-			callback = function()
-				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-				calcBSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
-				calcBSceneObj:draw()
-				gl.glReadPixels(0, 0, BTex.width, BTex.height, gl.GL_RGBA, gl.GL_FLOAT, BData)
-			end,
-		}
-glreport'here'
-		BTex:bind()
-			:generateMipmap()
-			:unbind()
-glreport'here'
-	end)
-
---[[
-		for j=0,latdim-1 do
-			local v = (j + .5) / latdim
-			local lat = (v * 2 - 1) * 90
-			local phi = math.rad(lat)
-			for i=0,londim-1 do
-				local u = (i + .5) / londim
-				local lon = (u * 2 - 1) * 180
-				local lambda = math.rad(lon)
-				print(BData[i+londim*j], calcB(phi, lambda, 0))
-			end
-		end
---]]
-
--- [=[ hmm, better way than copy paste?
-
-	timer('generating div B and curl B', function()
-		local B2Tex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,
-			width = londim,
-			height = latdim,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}:unbind()
-glreport'here'
-
-		-- module depends M_PI, uniform vec2 latLonDim
-		self.calcB2Code = [[
+	-- module depends M_PI, uniform vec2 latLonDim
+	self.calcB2Code = [[
 vec4 calcB2(vec3 plh) {
 	float latdim = latLonDim.x;
 	float londim = latLonDim.y;
@@ -876,87 +733,246 @@ vec4 calcB2(vec3 plh) {
 }
 ]]
 
-		local calcB2SceneObj = GLSceneObject{
-			program = {
-				version = 'latest',
-				precision = 'best',
-				shaders = {self.quadGeomVertexShader},
-				fragmentCode = [[
+	-- size can be arbitrary
+	-- but the WMM model is for 15 mins, so [360,180] x4 = 1440 x 720
+	local BData = ffi.new('vec4f_t[?]', londim * latdim)
+	local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
+	timer('generating B field', function()
 
-uniform float dt;
+		-- TODO better way to get stats?  
+		-- Transform Feedback?
+		-- input = (lat lon) pairs
+		-- ... fill 
+		
+		-- TODO is this faster than a unit quad fbo / texel write?
 
-]]..self.calc_b_shader..[[
+		local GLTransformFeedbackBuffer = require 'gl.transformfeedbackbuffer'
+		
+		local phiLambdaBuf = GLTransformFeedbackBuffer{
+			size = londim * latdim * ffi.sizeof'GLfloat' * 2,
+			--usage = gl.GL_STATIC_READ,	-- static read + static draw?
+			usage = gl.GL_DYNAMIC_DRAW,
+			count = londim * latdim,
+			dim = 2,
+			type = gl.GL_FLOAT,
+		}:unbind()
 
-#define M_PI ]]..('%.49f'):format(math.pi)..[[
-
-// used in (d/dphi, d/dlambda) finite-difference resolution
-uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
-
-]]..self.calcB2Code..[[
-
-in vec2 texcoordv;
-out vec4 fragColor;
-
+		local genPhiLambdaGridProgram = GLProgram{
+			version = 'latest',
+			precision = 'best',
+			header = piDef,
+			vertexCode = [[
+uniform ivec2 latLonDim;	//(latdim, londim) = (height, width)
+out vec2 phiLambda;
 void main() {
-	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
-	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
-	fragColor = calcB2(vec3(phi, lambda, 0.));
+	int i = gl_VertexID % latLonDim.y;
+	int j = (gl_VertexID - i) / latLonDim.y;
+	float u = (float(i) + .5) / float(latLonDim.y);
+	float v = (float(j) + .5) / float(latLonDim.x);
+	phiLambda = vec2(
+		(v - .5) * M_PI,		//[-pi/2, pi/2]
+		(u - .5) * 2. * M_PI);	//[-pi, pi]
 }
 ]],
-				uniforms = {
-					dt = 0,
-					latLonDim = {latdim, londim},
-				},
+			uniforms = {
+				latLonDim = {latdim, londim},
 			},
-			geometry = self.quadGeom,
+			transformFeedback = {
+				'phiLambda',
+				mode = 'interleaved',
+			},
 		}
-
-		-- only used for stat calc
-		self.fbo:draw{
-			viewport = {0, 0, londim, latdim},
-			dest = B2Tex,
-			callback = function()
-				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-				calcB2SceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
-				calcB2SceneObj:draw()
-				gl.glReadPixels(0, 0, B2Tex.width, B2Tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2Data)
-			end,
-		}
-glreport'here'
-		B2Tex:bind()
-			:generateMipmap()
+	
+timer('generating (phi, lambda) grid', function()
+		phiLambdaBuf:bind()
+			:bindBase()
 			:unbind()
-	end)
+		gl.glEnable(gl.GL_RASTERIZER_DISCARD)
+		gl.glBeginTransformFeedback(gl.GL_POINTS)
+		gl.glDrawArrays(gl.GL_POINTS, 0, phiLambdaBuf.count)
+		gl.glEndTransformFeedback()
+		gl.glDisable(gl.GL_RASTERIZER_DISCARD)
+		gl.glFlush()
+end)
+		genPhiLambdaGridProgram:useNone()
 
-	timer('generating stats', function()
-		local statgens = table{
-			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) end,	-- not :length() since it's vec4...
-			function(B, B2) return B.x end,
-			function(B, B2) return B.y end,
-			function(B, B2) return B.z end,
-			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y) end,
-			function(B, B2) return B2.x end,
-			function(B, B2) return B2.y end,
-			function(B, B2) return B2.z end,
-			function(B, B2) return B2.w end,
-		}
-
+		--[[ verify
+		local latLonCPU = ffi.cast('vec2f_t*', phiLambdaBuf:bind():map(gl.GL_MAP_READ_BIT))
+print('latLonCPU', latLonCPU)
 		for j=0,latdim-1 do
+			local v = (j + .5) / latdim
+			local lat = (v * 2 - 1) * 90
+			local phi = math.rad(lat)
 			for i=0,londim-1 do
-				local e = i + londim * j
-				local B = BData[e]
-				local B2 = B2Data[e]
-				local Bmag = B:length()
-				BStat:accum(
-					statgens:mapi(function(f)
-						return f(B, B2)
-					end):unpack()
-				)
+				local u = (i + .5) / londim
+				local lon = (u * 2 - 1) * 180
+				local lambda = math.rad(lon)
+				local src = latLonCPU[i + londim * j]
+				local check = vec2f(phi, lambda)
+				local dist = (check - src):lenSq()
+				if dist > 1e-5 then
+					error('oob dist '..dist..' at i='..i..' j='..j)
+				end
 			end
 		end
+		phiLambdaBuf:bind():unmap():unbind()
+		--]]
 
+		-- now that we're no longer using this for transform feedback ... switch its target ... and its class
+		setmetatable(phiLambdaBuf, GLArrayBuffer)
+
+		-- then transform to output to B and B2 fields
+		-- [[ interleaved 8 component buffer
+		local BBuf = GLTransformFeedbackBuffer{
+			--size = londim * latdim * ffi.sizeof'GLfloat' * 4,
+			size = londim * latdim * ffi.sizeof'GLfloat' * 8,
+			--usage = gl.GL_STATIC_READ,
+			usage = gl.GL_DYNAMIC_DRAW,
+			count = londim * latdim,
+			--dim = 4,
+			dim = 8,
+			type = gl.GL_FLOAT,
+		}:unbind()
+		--]]
+		--[[ separate 4 component buffers
+		local BBuf = GLTransformFeedbackBuffer{
+			size = londim * latdim * ffi.sizeof'GLfloat' * 4,
+			usage = gl.GL_DYNAMIC_DRAW,
+			count = londim * latdim,
+			dim = 4,
+			type = gl.GL_FLOAT,
+		}:unbind()	
+		local B2Buf = GLTransformFeedbackBuffer{
+			size = londim * latdim * ffi.sizeof'GLfloat' * 4,
+			usage = gl.GL_STATIC_READ,
+			count = londim * latdim,
+			dim = 4,
+			type = gl.GL_FLOAT,
+		}:unbind()
+		--]]
+
+		local genBCalcProgram = GLProgram{
+			version = 'latest',
+			precision = 'best',
+			header = piDef,
+			vertexCode = [[
+uniform float dt;
+uniform vec2 latLonDim;	// (latdim, londim)
+
+]]..self.calcBCode
+..self.calcB2Code
+..[[
+
+layout(location=0) in vec2 phiLambda;
+out vec4 B;		// Bx By Bz 0
+out vec4 B2;	// div3d, div2d, curl2d, curl3d
+void main() {
+	vec3 plh = vec3(phiLambda, 0.);
+	B = vec4(calcB(plh), 0.);	// B.xyz ... TODO store BMag in B.w ?
+	B2 = calcB2(plh);			// div(B.xyz), div(B.xy), curl(B.xy), |curl(B.xyz)|
+}
+]],
+			uniforms = {
+				dt = guivars.fieldDT,
+				latLonDim = {latdim, londim},
+			},
+			attrs = {
+				phiLambda = phiLambdaBuf,
+			},
+			transformFeedback = {
+				'B',
+				'B2',
+				mode = 'interleaved',
+				--mode = 'separate',
+			},
+		}
+		for name,attr in pairs(genBCalcProgram.attrs) do
+			attr:enableAndSet()
+		end
+timer('generating B and B2 using xform feedback', function()
+		-- [[ interleaved and separate ...
+		BBuf:bind()
+			:bindBase(0)
+			:unbind()
+		--]]
+		--[[ separate
+		B2Buf:bind()
+			:bindBase(1)
+			:unbind()
+		--]]
+		gl.glEnable(gl.GL_RASTERIZER_DISCARD)
+		gl.glBeginTransformFeedback(gl.GL_POINTS)
+		gl.glDrawArrays(gl.GL_POINTS, 0, BBuf.count)
+		gl.glEndTransformFeedback()
+		gl.glDisable(gl.GL_RASTERIZER_DISCARD)
+		gl.glFlush()
+		for name,attr in pairs(genBCalcProgram.attrs) do
+			attr:disable()
+		end
+		genBCalcProgram:useNone()
+end)
+
+timer('cpu computing BStats', function()
+		local statgens = table{
+			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) end,	-- |B_xyz| ... not :length() since it's vec4...
+			function(B, B2) return B.x end,		-- B_x
+			function(B, B2) return B.y end,		-- B_y
+			function(B, B2) return B.z end,		-- B_z
+			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y) end,	-- |B_xy|
+			function(B, B2) return B2.x end,	-- ∇⋅B
+			function(B, B2) return B2.y end,	-- ∇⋅(B_xy)
+			function(B, B2) return B2.z end,	-- (∇×B)_z
+			function(B, B2) return B2.w end,	-- |∇×B|
+		}
+	
+		-- [[ interleaved 8 component
+		local BData = ffi.new('vec4f_t[?]', 2 * londim * latdim)
+		local BMap = ffi.cast('vec4f_t*', BBuf:bind():map(gl.GL_MAP_READ_BIT, 0, BBuf.size))
+		ffi.copy(BData, BMap, BBuf.size)
+		BBuf:unmap():unbind()
+		--]]
+		--[[ separate 4 components
+		local BData = ffi.new('vec4f_t[?]', londim * latdim)
+		local BMap = ffi.cast('vec4f_t*', BBuf:bind():map(gl.GL_MAP_READ_BIT, 0, BBuf.size))
+		ffi.copy(BData, BMap, BBuf.size)
+		BBuf:unmap():unbind()
+		local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
+		local B2Map = ffi.cast('vec4f_t*', B2Buf:bind():map(gl.GL_MAP_READ_BIT, 0, B2Buf.size))
+		ffi.copy(B2Data, B2Map, BBuf.size)
+		B2Buf:unmap():unbind()
+		--]]
+		
+		for e=0,BBuf.count-1 do
+			-- [[ interleaved 8 component
+			local B = BData[0 + 2 * e]
+			local B2 = BData[1 + 2 * e]
+			--]]
+			--[[ separate 4 components
+			local B = BData[e]
+			local B2 = B2Data[e]
+			--]]
+			BStat:accum(
+				statgens:mapi(function(f)
+					return f(B, B2)
+				end):unpack()
+			)
+		end
+end)
+glreport'here'		
 		print('BStat')
 		print(BStat)
+--[[ stats should look like for wmm2020 dt=0
+mag = {min = 22232.017209054, max = 66990.328957622, avg = 45853.59896298, sqavg = 2234453543.2928, stddev = 11484.816299572, count = 1036800},
+x = {min = -16735.287109375, max = 41797.078125, avg = 17984.161021002, sqavg = 460231098.77605, stddev = 11696.198149258, count = 1036800},
+y = {min = -17571.607421875, max = 16772.9140625, avg = 0.00060528925769373, sqavg = 42031905.017686, stddev = 6483.2017566698, count = 1036800},
+z = {min = -66933.3984375, max = 60970.375, avg = 1180.7201683604, sqavg = 1732190539.499, stddev = 41602.841722447, count = 1036800},
+mag2d = {min = 29.5594549176, max = 41800.698442297, avg = 20242.527057979, sqavg = 502263003.79371, stddev = 9617.85330002, count = 1036800},
+div = {min = -4.3255414962769, max = 4.7061634063721, avg = 0.0019280310092957, sqavg = 0.044430527339689, stddev = 0.2107766828568, count = 1036800},
+div2d = {min = -4.2783694267273, max = 4.6579914093018, avg = 0.0029287106643504, sqavg = 0.039302149729322, stddev = 0.19822606383411, count = 1036800},
+curlZ = {min = -104.66393280029, max = 103.64836120605, avg = 1.1786829213153e-08, sqavg = 7.8592639803675, stddev = 2.8034378859478, count = 1036800},
+curlMag = {min = 0.00051679083844647, max = 104.75435638428, avg = 0.16494477450588, sqavg = 7.9169097917121, stddev = 2.8088615154677, count = 1036800},
+--]]
+
 	end)
 
 --[==[	-- plotting the bins
@@ -1056,7 +1072,7 @@ void main() {
 
 uniform float dt;
 
-]]..self.calc_b_shader..template([[
+]]..self.calcBCode..template([[
 
 #define M_PI <?=('%.49f'):format(math.pi)?>
 
@@ -1208,7 +1224,7 @@ void main() {
 			vertexCode = chartCode
 ..[[
 uniform float dt;
-]]..self.calc_b_shader
+]]..self.calcBCode
 ..template([[
 
 <? for _,name in ipairs(chartCNames) do
@@ -1349,7 +1365,7 @@ void main() {
 			fragmentCode = chartCode
 ..[[
 uniform float dt;
-]]..self.calc_b_shader..[[
+]]..self.calcBCode..[[
 
 // ported from WMM2020 GeomagnetismLibrary.c
 // expects xyz in cartesian units earth-semimajor-axis
