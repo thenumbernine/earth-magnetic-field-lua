@@ -350,9 +350,6 @@ By = d/dlambda points east
 Bz = -d/dheight points inwards
 --]]
 
-local londim -- dimension in 2D x dir / spherical phi / globe lambda dir
-local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
-
 local earthtex
 
 local App = require 'imguiapp.withorbit'()
@@ -619,12 +616,12 @@ for chartIndex,c in ipairs(charts) do
 		self.sceneobj.uniforms.dt = guivars.fieldDT
 		self.sceneobj.uniforms.alpha = guivars.drawAlpha
 		self.sceneobj.uniforms.gradScale = guivars.gradScale
-		self.sceneobj.uniforms.BMin = {app.BStat.x.min, app.BStat.y.min, app.BStat.z.min, 0}
-		self.sceneobj.uniforms.BMax = {app.BStat.x.max, app.BStat.y.max, app.BStat.z.max, 0}
-		self.sceneobj.uniforms.B2Min = {app.BStat.div.min, app.BStat.div2d.min, app.BStat.curlZ.min, app.BStat.curlMag.min}
-		self.sceneobj.uniforms.B2Max = {app.BStat.div.max, app.BStat.div2d.max, app.BStat.curlZ.max, app.BStat.curlMag.max}
-		self.sceneobj.uniforms.B3Min = {app.BStat.mag.min, app.BStat.mag2d.min, 0, 0}
-		self.sceneobj.uniforms.B3Max = {app.BStat.mag.max, app.BStat.mag2d.max, 0, 0}
+		self.sceneobj.uniforms.BMin = app.BMin.s
+		self.sceneobj.uniforms.BMax = app.BMax.s
+		self.sceneobj.uniforms.B2Min = app.B2Min.s
+		self.sceneobj.uniforms.B2Max = app.B2Max.s
+		self.sceneobj.uniforms.B3Min = app.B3Min.s
+		self.sceneobj.uniforms.B3Max = app.B3Max.s
 		self.sceneobj.uniforms['weight_Equirectangular'] = chartIndex == 1 and 1 or 0
 		self.sceneobj.uniforms['weight_Azimuthal_equidistant'] = chartIndex == 2 and 1 or 0
 		self.sceneobj.uniforms['weight_Mollweide'] = chartIndex == 3 and 1 or 0
@@ -673,8 +670,8 @@ function App:initGL(...)
 	-- used for determining ranges, tho those ranges are invalide for any other times and altitudes
 	-- and in js-emulation it runs very slow
 	-- so i might try to get rid of this ...
-	local londim = 144	--1440
-	local latdim = 72	--720
+	local londim = 144	-- 1440	 -- dimension in 2D x dir / spherical phi / globe lambda dir
+	local latdim = 72	-- 720	 -- dimension in 2D y dir / spherical theta / globe phi dir
 
 	-- fbo is used for stats calcs and for field line integration
 	self.fbo = GLFBO()
@@ -1592,6 +1589,11 @@ function App:integrateFieldLines()
 glreport'here'
 end
 
+-- this goes slow right now
+-- doing a min/max reduce on my hydro opencl project is muuuuuch faster
+-- in fact, am I doing reduce on my webgl cfd project?
+-- hmm, how to improve and still be glsl compat
+-- for one, I could just reduce the variable being drawn in overlay, and not reduce all of them
 function App:recalcBStats()
 	self.calcBTexSceneObj.uniforms.dt = guivars.fieldDT
 	self.fbo:draw{
@@ -1620,36 +1622,18 @@ function App:recalcBStats()
 		end,
 	}
 
-	self.BStat = table{
-		'x', 'y', 'z',
-		'div', 'div2d', 'curlZ', 'curlMag',
-		 'mag', 'mag2d'
-	}:mapi(function(k)
-		return {}, k
-	end):setmetatable(nil)
-
 	timer('generating stats', function()
 -- [[
-		local BMin = self.minReduce(self.BTex)
-		local BMax = self.maxReduce(self.BTex)
+		self.BMin = self.minReduce(self.BTex)
+		self.BMax = self.maxReduce(self.BTex)
 --print('reduce B min', BMin, 'max', BMax)
-		local B2Min = self.minReduce(self.B2Tex)
-		local B2Max = self.maxReduce(self.B2Tex)
+		self.B2Min = self.minReduce(self.B2Tex)
+		self.B2Max = self.maxReduce(self.B2Tex)
 --print('reduce B2 min', B2Min, 'max', B2Max)
-		local B3Min = self.minReduce(self.B3Tex)
-		local B3Max = self.maxReduce(self.B3Tex)
+		self.B3Min = self.minReduce(self.B3Tex)
+		self.B3Max = self.maxReduce(self.B3Tex)
 --print('reduce B3 min', B3Min, 'max', B3Max)
 --]]
-
-		self.BStat.x.min = BMin.x			self.BStat.x.max = BMax.x
-		self.BStat.y.min = BMin.y			self.BStat.y.max = BMax.y
-		self.BStat.z.min = BMin.z			self.BStat.z.max = BMax.z
-		self.BStat.div.min = B2Min.x		self.BStat.div.max = B2Max.x
-		self.BStat.div2d.min = B2Min.y		self.BStat.div2d.max = B2Max.y
-		self.BStat.curlZ.min = B2Min.z		self.BStat.curlZ.max = B2Max.z
-		self.BStat.curlMag.min = B2Min.w	self.BStat.curlMag.max = B2Max.w
-		self.BStat.mag.min = B3Min.x		self.BStat.mag.max = B3Max.x
-		self.BStat.mag2d.min = B3Min.y		self.BStat.mag2d.max = B3Max.y
 
 --[[ stats should look like for wmm2020 dt=0
 x = {min = -16735.287109375, max = 41797.078125, avg = 17984.161021002, sqavg = 460231098.77605, stddev = 11696.198149258, count = 1036800},
@@ -1802,7 +1786,7 @@ function App:update(...)
 		self.arrowFieldSceneObj.uniforms.arrowLatDim = guivars.arrowLatDim
 		self.arrowFieldSceneObj.uniforms.arrowLonDim = guivars.arrowLonDim
 		self.arrowFieldSceneObj.uniforms.arrowEvenDistribute = guivars.arrowEvenDistribute
-		self.arrowFieldSceneObj.uniforms.BMagMax = self.BStat.mag.max
+		self.arrowFieldSceneObj.uniforms.BMagMax = self.B3Max.x
 		self.arrowFieldSceneObj.uniforms.arrowScale = guivars.arrowScale
 
 		self.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
@@ -1816,7 +1800,7 @@ function App:update(...)
 	if guivars.doDrawFieldLines then
 		self.fieldLineSceneObj.texs[1] = gradTex
 		self.fieldLineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-		self.fieldLineSceneObj.uniforms.BMag = {self.BStat.mag.min, self.BStat.mag.max}
+		self.fieldLineSceneObj.uniforms.BMag = {self.B3Min.x, self.B3Max.x}
 
 		-- TODO if we're using weights then why do we need the 'chartIs3D' flag?
 		self.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
@@ -1917,8 +1901,16 @@ function App:updateGUI()
 	-- can I just factor out the dt?
 	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
 	if ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', -50, 50) then
-		self:recalcBStats()
+		self.lastUpdateDTTime = timer.getTime()
 		self:integrateFieldLines()
+	end
+
+	-- only once the dt var has finished updating ...
+	if self.lastUpdateDTTime
+	and timer.getTime() - self.lastUpdateDTTime > 1
+	then
+		self.lastUpdateDTTime = nil
+		self:recalcBStats()
 	end
 end
 
