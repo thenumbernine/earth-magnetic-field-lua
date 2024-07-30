@@ -351,13 +351,6 @@ By = d/dlambda points east
 Bz = -d/dheight points inwards
 --]]
 
-local BStat = StatSet(
-	'x', 'y', 'z',
-	'div', 'div2d', 'curlZ', 'curlMag',
-	 'mag', 'mag2d'
-)
-for i,stat in ipairs(BStat) do stat.onlyFinite = true end
-
 local londim -- dimension in 2D x dir / spherical phi / globe lambda dir
 local latdim -- dimension in 2D y dir / spherical theta / globe phi dir
 
@@ -515,13 +508,13 @@ local overlays = {
 	{
 		name = '|B|',
 		code = [[
-	s = (length(B) - BMagMin) / (BMagMax - BMagMin);
+	s = (length(B) - B3Min.x) / (B3Max.x - B3Min.x);
 ]],
 	},
 	{
 		name = '|B| 2D',
 		code = [[
-	s = (length(B.xy) - BMag2DMin) / (BMag2DMax - BMag2DMin);
+	s = (length(B.xy) - B3Min.y) / (B3Max.y- B3Min.y);
 ]],
 	},
 	{
@@ -533,43 +526,43 @@ local overlays = {
 	{
 		name = 'Bx (north)',
 		code = [[
-	s = (B.x - BxMin) / (BxMax - BxMin);
+	s = (B.x - BMin.x) / (BMax.x - BMin.x);
 ]],
 	},
 	{
 		name = 'By (east)',
 		code = [[
-	s = (B.y - ByMin) / (ByMax - ByMin);
+	s = (B.y - BMin.y) / (BMax.y - BMin.y);
 ]],
 	},
 	{
 		name = 'Bz (inward)',
 		code = [[
-	s = (B.z - BzMin) / (BzMax - BzMin);
+	s = (B.z - BMin.z) / (BMax.z - BMin.z);
 ]],
 	},
 	{
 		name = 'div B',
 		code = [[
-	s = (B2.x - BDivMin) / (BDivMax - BDivMin);
+	s = (B2.x - B2Min.x) / (B2Max.x - B2Min.x);
 ]],
 	},
 	{
 		name = 'div2D B',
 		code = [[
-	s = (B2.y - BDiv2DMin) / (BDiv2DMax - BDiv2DMin);
+	s = (B2.y - B2Min.y) / (B2Max.y - B2Min.y);
 ]],
 	},
 	{
 		name = 'curl B z',
 		code = [[
-	s = (B2.z - BCurlZMin) / (BCurlZMax - BCurlZMin);
+	s = (B2.z - B2Min.z) / (B2Max.z - B2Min.z);
 ]],
 	},
 	{
 		name = 'curl B Mag',
 		code = [[
-	s = (B2.w - BCurlMagMin) / (BCurlMagMax - BCurlMagMin);
+	s = (B2.w - B2Min.w) / (B2Max.w - B2Min.w);
 ]],
 	},
 }
@@ -627,6 +620,12 @@ for chartIndex,c in ipairs(charts) do
 		self.sceneobj.uniforms.dt = guivars.fieldDT
 		self.sceneobj.uniforms.alpha = guivars.drawAlpha
 		self.sceneobj.uniforms.gradScale = guivars.gradScale
+		self.sceneobj.uniforms.BMin = {app.BStat.x.min, app.BStat.y.min, app.BStat.z.min, 0}
+		self.sceneobj.uniforms.BMax = {app.BStat.x.max, app.BStat.y.max, app.BStat.z.max, 0}
+		self.sceneobj.uniforms.B2Min = {app.BStat.div.min, app.BStat.div2d.min, app.BStat.curlZ.min, app.BStat.curlMag.min}
+		self.sceneobj.uniforms.B2Max = {app.BStat.div.max, app.BStat.div2d.max, app.BStat.curlZ.max, app.BStat.curlMag.max}
+		self.sceneobj.uniforms.B3Min = {app.BStat.mag.min, app.BStat.mag2d.min, 0, 0}
+		self.sceneobj.uniforms.B3Max = {app.BStat.mag.max, app.BStat.mag2d.max, 0, 0}
 		self.sceneobj.uniforms['weight_Equirectangular'] = chartIndex == 1 and 1 or 0
 		self.sceneobj.uniforms['weight_Azimuthal_equidistant'] = chartIndex == 2 and 1 or 0
 		self.sceneobj.uniforms['weight_Mollweide'] = chartIndex == 3 and 1 or 0
@@ -733,396 +732,241 @@ vec4 calcB2(vec3 plh) {
 	);
 }
 ]]
+	-- lat/lon dim for surface statistics calculations
+	-- used for determining ranges, tho those ranges are invalide for any other times and altitudes
+	-- and in js-emulation it runs very slow
+	-- so i might try to get rid of this ...
+	local londim = js and 144 or 1440
+	local latdim = js and 72 or 720
 
-	-- size can be arbitrary
-	-- but the WMM model is for 15 mins, so [360,180] x4 = 1440 x 720
+	-- fbo is used for stats calcs and for field line integration
+	self.fbo = GLFBO()
+		:unbind()
+glreport'here'
+
+	self.quadGeomVertexShader = GLProgram.VertexShader{
+		version = 'latest',
+		precision = 'best',
+		code = [[
+layout(location=0) in vec2 vertex;
+out vec2 texcoordv;
+uniform mat4 mvProjMat;
+void main() {
+	texcoordv = vertex;
+	gl_Position = mvProjMat * vec4(vertex, 0., 1.);
+}
+]],
+	}
+
+	local BData = ffi.new('vec4f_t[?]', londim * latdim)
+	local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
 	timer('generating B field', function()
-
-		-- TODO better way to get stats?
-		-- Transform Feedback?
-		-- input = (lat lon) pairs
-		-- ... fill
-
-		-- TODO is this faster than a unit quad fbo / texel write?
-
-		local GLTransformFeedbackBuffer = require 'gl.transformfeedbackbuffer'
-
-		local phiLambdaBuf = GLTransformFeedbackBuffer{
-			size = londim * latdim * ffi.sizeof'GLfloat' * 2,
-			usage = gl.GL_STATIC_READ,
-			count = londim * latdim,
-			dim = 2,
+		local BTex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGBA,
 			type = gl.GL_FLOAT,
-		}:unbind()
-
-		local genPhiLambdaGridProgram = GLProgram{
-			version = 'latest',
-			precision = 'best',
-			header = piDef,
-			vertexCode = [[
-uniform ivec2 latLonDim;	//(latdim, londim) = (height, width)
-out vec2 phiLambda;
-void main() {
-	int i = gl_VertexID % latLonDim.y;
-	int j = (gl_VertexID - i) / latLonDim.y;
-	float u = (float(i) + .5) / float(latLonDim.y);
-	float v = (float(j) + .5) / float(latLonDim.x);
-	phiLambda = vec2(
-		(v - .5) * M_PI,		//[-pi/2, pi/2]
-		(u - .5) * 2. * M_PI);	//[-pi, pi]
-}
-]],
-			uniforms = {
-				latLonDim = {latdim, londim},
+			minFilter = gl.GL_NEAREST,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
 			},
-			transformFeedback = {
-				'phiLambda',
-				mode = 'interleaved',
-			},
-		}
-
-timer('generating (phi, lambda) grid', function()
-		phiLambdaBuf:bind()
-			:bindBase()
-			:unbind()
-		gl.glEnable(gl.GL_RASTERIZER_DISCARD)
-		gl.glBeginTransformFeedback(gl.GL_POINTS)
-		gl.glDrawArrays(gl.GL_POINTS, 0, phiLambdaBuf.count)
-		gl.glEndTransformFeedback()
-		gl.glDisable(gl.GL_RASTERIZER_DISCARD)
-		gl.glFlush()
-end)
-		genPhiLambdaGridProgram:useNone()
-
-		--[[ verify
-		local latLonCPU = ffi.cast('vec2f_t*', phiLambdaBuf:bind():map(gl.GL_MAP_READ_BIT))
-print('latLonCPU', latLonCPU)
-		for j=0,latdim-1 do
-			local v = (j + .5) / latdim
-			local lat = (v * 2 - 1) * 90
-			local phi = math.rad(lat)
-			for i=0,londim-1 do
-				local u = (i + .5) / londim
-				local lon = (u * 2 - 1) * 180
-				local lambda = math.rad(lon)
-				local src = latLonCPU[i + londim * j]
-				local check = vec2f(phi, lambda)
-				local dist = (check - src):lenSq()
-				if dist > 1e-5 then
-					error('oob dist '..dist..' at i='..i..' j='..j)
-				end
-			end
-		end
-		phiLambdaBuf:bind():unmap():unbind()
-		--]]
-
-		-- now that we're no longer using this for transform feedback ... switch its target ... and its class
-		setmetatable(phiLambdaBuf, GLArrayBuffer)
-
-		-- then transform to output to B and B2 fields
-		--[[ interleaved 12 component buffer
-		local BBuf = GLTransformFeedbackBuffer{
-			size = londim * latdim * ffi.sizeof'GLfloat' * 12,
-			usage = gl.GL_STATIC_READ,
-			count = londim * latdim,
-			dim = 12,
-			type = gl.GL_FLOAT,
 		}:unbind()
-		--]]
-		-- [[ separate 4 component buffers
-		local BBuf = GLTransformFeedbackBuffer{
-			size = londim * latdim * ffi.sizeof'GLfloat' * 4,
-			usage = gl.GL_DYNAMIC_DRAW,
-			count = londim * latdim,
-			dim = 4,
-			type = gl.GL_FLOAT,
-		}:unbind()
-		local B2Buf = GLTransformFeedbackBuffer{
-			size = londim * latdim * ffi.sizeof'GLfloat' * 4,
-			usage = gl.GL_STATIC_READ,
-			count = londim * latdim,
-			dim = 4,
-			type = gl.GL_FLOAT,
-		}:unbind()
-		local B3Buf = GLTransformFeedbackBuffer{
-			size = londim * latdim * ffi.sizeof'GLfloat' * 4,
-			usage = gl.GL_STATIC_READ,
-			count = londim * latdim,
-			dim = 4,
-			type = gl.GL_FLOAT,
-		}:unbind()
-		--]]
+glreport'here'
 
-		local genBCalcProgram = GLProgram{
-			version = 'latest',
-			precision = 'best',
-			header = piDef,
-			vertexCode = [[
+		local calcBSceneObj = GLSceneObject{
+			program = {
+				version = 'latest',
+				precision = 'best',
+				shaders = {self.quadGeomVertexShader},
+				fragmentCode = [[
 uniform float dt;
-uniform vec2 latLonDim;	// (latdim, londim)
+]]..self.calcBCode..template[[
 
-]]..self.calcBCode
-..self.calcB2Code
-..[[
+#define M_PI <?=('%.49f'):format(math.pi)?>
 
-in vec2 phiLambda;
-out vec4 B;		// Bx By Bz 0
-out vec4 B2;	// div3d, div2d, curl2d, curl3d
-out vec4 B3;	// mag3d, mag2d
-void main() {
-	vec3 plh = vec3(phiLambda, 0.);
-	B = vec4(calcB(plh), 0.);	// B.xyz ... TODO store BMag in B.w ?
-	B2 = calcB2(plh);			// div(B.xyz), div(B.xy), curl(B.xy), |curl(B.xyz)|
-	B3 = vec4(
-		length(B.xyz),
-		length(B.xy),
-		0.,
-		0.);
-}
-]],
-			uniforms = {
-				dt = guivars.fieldDT,
-				latLonDim = {latdim, londim},
-			},
-			attrs = {
-				phiLambda = phiLambdaBuf,
-			},
-			transformFeedback = {
-				'B',
-				'B2',
-				'B3',
-				--mode = 'interleaved',
-				mode = 'separate',
-			},
-		}
-		for name,attr in pairs(genBCalcProgram.attrs) do
-			attr:enableAndSet()
-		end
-timer('generating B and B2 using xform feedback', function()
-		-- [[ interleaved and separate ...
-		BBuf:bind()
-			:bindBase(0)
-			:unbind()
-		--]]
-		-- [[ separate
-		B2Buf:bind()
-			:bindBase(1)
-			:unbind()
-		B3Buf:bind()
-			:bindBase(2)
-			:unbind()
-		--]]
-		gl.glEnable(gl.GL_RASTERIZER_DISCARD)
-		gl.glBeginTransformFeedback(gl.GL_POINTS)
-		gl.glDrawArrays(gl.GL_POINTS, 0, BBuf.count)
-		gl.glEndTransformFeedback()
-		gl.glDisable(gl.GL_RASTERIZER_DISCARD)
-		gl.glFlush()
-		for name,attr in pairs(genBCalcProgram.attrs) do
-			attr:disable()
-		end
-		genBCalcProgram:useNone()
-end)
-
-		-- change BBuf from GLTransformFeedbackBuffer to GLArrayBuffer
-		setmetatable(BBuf, GLArrayBuffer)
-		setmetatable(B2Buf, GLArrayBuffer)
-		setmetatable(B3Buf, GLArrayBuffer)
-
-timer('cpu computing BStats', function()
-		-- transform-feedback find min/max across interleaved float inputs ...
-
---[=[ try to reduce on the gpu
-		-- reduce
-		-- ... means we want textures bound so we can read more than one at a time ...
-		-- ... means we want to treat it as a tex instead of a buffer (until webgl gets SSBO's ...)
-		-- ... means maybe transform feedback is overrated and I should've just used a FBO up until this point
-		local reduceTex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,
-			width = londim,
-			height = latdim,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}:unbind()
-
-		local reduce2Tex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,
-			width = londim,
-			height = latdim,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}:unbind()
-
-		--[[
-		run this on width/m, height/m for reduce count m x m
-		--]]
-		local minReduceKernel = GLProgram{
-			version = 'latest',
-			precision = 'best',
-			shaders = {self.quadGeomVertexShader},
-			fragmentCode = [[
-uniform sampler2D tex;
-uniform vec2 offset;
 in vec2 texcoordv;
 out vec4 fragColor;
 void main() {
-	fragColor = min(
-		min(
-			texture(tex, texcoordv),
-			texture(tex, texcoordv + vec2(offset.x, 0.))
-		),
-		min(
-			texture(tex, texcoordv + vec2(0., offset.y)),
-			texture(tex, texcoordv + offset)
-		)
-	);
+	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
+	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
+	vec3 B = calcB(vec3(phi, lambda, 0.));
+	fragColor = vec4(B, 1.);
 }
 ]],
-			attrs = {
-				vertexes = self.quadGeom.vertexes,
+				uniforms = {
+					dt = 0,
+				},
 			},
-		}:useNone()
-
-		-- now while we're here, glTexSubImage2D only red channel into reduceTex
-		-- TODO can we skip every 12?  with offset?  or nah?  mannnn too many limitations ...
-		-- I might have to either
-		-- a) use 3 out buffers from transform feedback or
-		-- b) just use FBO's from the start
-		-- [[
-		BBuf:bind(gl.GL_PIXEL_UNPACK_BUFFER)
-		gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, reduceTex.width, reduceTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
-		BBuf:unbind(gl.GL_PIXEL_UNPACK_BUFFER)
-		GLTex2D:unbind()
-		--]]
-
-		-- should reduce as ...
-		-- 1440, 720, 360, 180, 90, 45, 23, 12, 6, 3, 2, 1
-
-		local BData = ffi.new('vec4f_t[?]', londim * latdim)
-		local w = reduceTex.width
-		local h = reduceTex.height
-		local srcTex = reduceTex
-		local dstTex = reduce2Tex
-		local offset = .5
-		repeat
-			self.fbo:bind()
-				:setColorAttachmentTex2D(dstTex.id)
-			local res, err = self.fbo.check()
-			if not res then print(err) end
-			local newW = math.ceil(w / 2)
-			local newH = math.ceil(h / 2)
-			gl.glViewport(0, 0, newW, newH)
-
-			minReduceKernel:use()
-			minReduceKernel:setUniforms{
-				mvProjMat = self.unitProjMat.ptr,
-				offset = {offset, offset},
-			}
-			srcTex:bind()
-			self.quadGeom:draw()
-			minReduceKernel:useNone()
-
-			self.fbo:unbind()
-
-			print('iter', w, h)
-			dstTex:toCPU(BData)
-			for i=0,newW*newH-1 do
-				print(i, BData[i])
-			end
-
-			srcTex, stTex = dstTex, srcTex
-			w, h = newW, newH
-			offset = offset * .5
-		until w <= 1 or h <= 1
-os.exit()
---]=]
-
-		local statgens = table{
-			-- matches upwith BStat declaration
-			function(B, B2, B3) return B.x end,		-- B_x
-			function(B, B2, B3) return B.y end,		-- B_y
-			function(B, B2, B3) return B.z end,		-- B_z
-			function(B, B2, B3) return B2.x end,	-- ∇⋅B
-			function(B, B2, B3) return B2.y end,	-- ∇⋅(B_xy)
-			function(B, B2, B3) return B2.z end,	-- (∇×B)_z
-			function(B, B2, B3) return B2.w end,	-- |∇×B|
-			function(B, B2, B3) return B3.x end,	-- |B_xyz|
-			function(B, B2, B3) return B3.y end,	-- |B_xy|
+			geometry = self.quadGeom,
 		}
 
-		--[[ interleaved 8 component
-		local BData = ffi.new('vec4f_t[?]', 3 * londim * latdim)
-		local BMap = ffi.cast('vec4f_t*', BBuf:bind():map(gl.GL_MAP_READ_BIT, 0, BBuf.size))
-		ffi.copy(BData, BMap, BBuf.size)
-		BBuf:unmap():unbind()
-		--]]
-		-- [[ separate 4 components
-		local BData = ffi.new('vec4f_t[?]', londim * latdim)
-		local BMap = ffi.cast('vec4f_t*', BBuf:bind():map(gl.GL_MAP_READ_BIT, 0, BBuf.size))
-		ffi.copy(BData, BMap, BBuf.size)
-		BBuf:unmap():unbind()
-		local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
-		local B2Map = ffi.cast('vec4f_t*', B2Buf:bind():map(gl.GL_MAP_READ_BIT, 0, B2Buf.size))
-		ffi.copy(B2Data, B2Map, BBuf.size)
-		B2Buf:unmap():unbind()
-		local B3Data = ffi.new('vec4f_t[?]', londim * latdim)
-		local B3Map = ffi.cast('vec4f_t*', B3Buf:bind():map(gl.GL_MAP_READ_BIT, 0, B3Buf.size))
-		ffi.copy(B3Data, B3Map, BBuf.size)
-		B3Buf:unmap():unbind()
-		--]]
-
-		for e=0,BBuf.count-1 do
-			--[[ interleaved 8 component
-			local B = BData[0 + 3 * e]
-			local B2 = BData[1 + 3 * e]
-			local B3 = BData[2 + 3 * e]
-			--]]
-			-- [[ separate 4 components
-			local B = BData[e]
-			local B2 = B2Data[e]
-			local B3 = B3Data[e]
-			--]]
-			BStat:accum(
-				statgens:mapi(function(f)
-					return f(B, B2, B3)
-				end):unpack()
-			)
-		end
-end)
+		-- BData / B2Data is only used for stat computation
+		self.fbo:draw{
+			viewport = {0, 0, londim, latdim},
+			dest = BTex,
+			callback = function()
+				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+				calcBSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
+				calcBSceneObj:draw()
+				gl.glReadPixels(0, 0, BTex.width, BTex.height, gl.GL_RGBA, gl.GL_FLOAT, BData)
+			end,
+		}
 glreport'here'
+	end)
+
+	timer('generating div B and curl B', function()
+		local B2Tex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_NEAREST,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}:unbind()
+glreport'here'
+
+		-- module depends M_PI, uniform vec2 latLonDim
+		self.calcB2Code = [[
+vec4 calcB2(vec3 plh) {
+	float latdim = latLonDim.x;
+	float londim = latLonDim.y;
+	vec3 dphi = vec3(M_PI / londim, 0., 0.);
+	vec3 dlambda = vec3(0., 2. * M_PI / latdim, 0.);
+	vec3 dheight = vec3(0., 0., 1000.);
+
+	// TODO units anyone?
+	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / dphi.x / (wgs84_a * 1e+3 * cos(plh.x));
+	vec3 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / dlambda.y / (wgs84_a * 1e+3);
+	vec3 dheight_B = (calcB(plh + dheight) - calcB(plh - dheight)) / dheight.z;
+
+	float div2D_B = dphi_B.x + dlambda_B.y;
+	float div_B = div2D_B + dheight_B.z;
+
+	vec3 curl_B = vec3(
+		dlambda_B.z - dheight_B.y,
+		dheight_B.x - dphi_B.z,
+		dphi_B.y - dlambda_B.x
+	);
+
+	return vec4(
+		div_B,
+		div2D_B,
+		curl_B.z,
+		length(curl_B)
+	);
+}
+]]
+
+		local calcB2SceneObj = GLSceneObject{
+			program = {
+				version = 'latest',
+				precision = 'best',
+				shaders = {self.quadGeomVertexShader},
+				fragmentCode = [[
+
+uniform float dt;
+
+]]..self.calcBCode..[[
+
+#define M_PI ]]..('%.49f'):format(math.pi)..[[
+
+// used in (d/dphi, d/dlambda) finite-difference resolution
+uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
+
+]]..self.calcB2Code..[[
+
+in vec2 texcoordv;
+out vec4 fragColor;
+
+void main() {
+	float phi = (texcoordv.y - .5) * M_PI;			//[-pi/2, pi/2]
+	float lambda = (texcoordv.x - .5) * 2. * M_PI;	//[-pi, pi]
+	fragColor = calcB2(vec3(phi, lambda, 0.));
+}
+]],
+				uniforms = {
+					dt = 0,
+					latLonDim = {latdim, londim},
+				},
+			},
+			geometry = self.quadGeom,
+		}
+
+		-- only used for stat calc
+		self.fbo:draw{
+			viewport = {0, 0, londim, latdim},
+			dest = B2Tex,
+			callback = function()
+				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+				calcB2SceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
+				calcB2SceneObj:draw()
+				gl.glReadPixels(0, 0, B2Tex.width, B2Tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2Data)
+			end,
+		}
+glreport'here'
+	end)
+
+	self.BStat = StatSet(
+		'x', 'y', 'z',
+		'div', 'div2d', 'curlZ', 'curlMag',
+		 'mag', 'mag2d'
+	)
+	for i,stat in ipairs(self.BStat) do stat.onlyFinite = true end
+
+	timer('generating stats', function()
+		local statgens = table{
+			function(B, B2) return B.x end,
+			function(B, B2) return B.y end,
+			function(B, B2) return B.z end,
+			function(B, B2) return B2.x end,
+			function(B, B2) return B2.y end,
+			function(B, B2) return B2.z end,
+			function(B, B2) return B2.w end,
+			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) end,	-- not :length() since it's vec4...
+			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y) end,
+		}
+
+		for j=0,latdim-1 do
+			for i=0,londim-1 do
+				local e = i + londim * j
+				local B = BData[e]
+				local B2 = B2Data[e]
+				local Bmag = B:length()
+				self.BStat:accum(
+					statgens:mapi(function(f)
+						return f(B, B2)
+					end):unpack()
+				)
+			end
+		end
+
 		print('BStat')
-		print(BStat)
+		print(self.BStat)
 --[[ stats should look like for wmm2020 dt=0
-mag = {min = 22232.017209054, max = 66990.328957622, avg = 45853.59896298, sqavg = 2234453543.2928, stddev = 11484.816299572, count = 1036800},
 x = {min = -16735.287109375, max = 41797.078125, avg = 17984.161021002, sqavg = 460231098.77605, stddev = 11696.198149258, count = 1036800},
 y = {min = -17571.607421875, max = 16772.9140625, avg = 0.00060528925769373, sqavg = 42031905.017686, stddev = 6483.2017566698, count = 1036800},
 z = {min = -66933.3984375, max = 60970.375, avg = 1180.7201683604, sqavg = 1732190539.499, stddev = 41602.841722447, count = 1036800},
-mag2d = {min = 29.5594549176, max = 41800.698442297, avg = 20242.527057979, sqavg = 502263003.79371, stddev = 9617.85330002, count = 1036800},
 div = {min = -4.3255414962769, max = 4.7061634063721, avg = 0.0019280310092957, sqavg = 0.044430527339689, stddev = 0.2107766828568, count = 1036800},
 div2d = {min = -4.2783694267273, max = 4.6579914093018, avg = 0.0029287106643504, sqavg = 0.039302149729322, stddev = 0.19822606383411, count = 1036800},
 curlZ = {min = -104.66393280029, max = 103.64836120605, avg = 1.1786829213153e-08, sqavg = 7.8592639803675, stddev = 2.8034378859478, count = 1036800},
 curlMag = {min = 0.00051679083844647, max = 104.75435638428, avg = 0.16494477450588, sqavg = 7.9169097917121, stddev = 2.8088615154677, count = 1036800},
+mag = {min = 22232.017209054, max = 66990.328957622, avg = 45853.59896298, sqavg = 2234453543.2928, stddev = 11484.816299572, count = 1036800},
+mag2d = {min = 29.5594549176, max = 41800.698442297, avg = 20242.527057979, sqavg = 502263003.79371, stddev = 9617.85330002, count = 1036800},
 --]]
-
-	end)
 
 --[==[	-- plotting the bins
 		local Bin = require 'stat.bin'
 
 		local binCount = 100
-		local bins = table.mapi(BStat, function(stat,k)
+		local bins = table.mapi(self.BStat, function(stat,k)
 			return Bin(
 				math.max(stat.min, stat.avg - 3*stat.stddev),
 				math.min(stat.max, stat.avg + 3*stat.stddev),
@@ -1136,7 +980,7 @@ curlMag = {min = 0.00051679083844647, max = 104.75435638428, avg = 0.16494477450
 				local B2 = B2Data[e]
 				local Bmag = B:length()
 				for i=1,#bins do
-					local stat = BStat[i]
+					local stat = self.BStat[i]
 					local v = statgens[i](B, B2)
 					if v >= stat.avg - 3*stat.stddev and v <= stat.avg + 3*stat.stddev then
 						bins[i]:accum(v)
@@ -1147,17 +991,18 @@ curlMag = {min = 0.00051679083844647, max = 104.75435638428, avg = 0.16494477450
 		for i,bin in ipairs(bins) do
 			path'tmp.txt':write(bin:getTextData())
 			require 'gnuplot'{
-				title = BStat[i].name,
+				title = self.BStat[i].name,
 				terminal = 'png size 1024,768',
-				output = BStat[i].name..'.png',
+				output = self.BStat[i].name..'.png',
 				{using='1:2', datafile = 'tmp.txt'},
 			}
 		end
 --]==]
+	end)
 
 	-- clamp in the min/max to 3 stddev
-	for i=1,#BStat do
-		local stat = BStat[i]
+	for i=1,#self.BStat do
+		local stat = self.BStat[i]
 		stat.min = math.max(stat.min, stat.avg - 3*stat.stddev)
 		stat.max = math.min(stat.max, stat.avg + 3*stat.stddev)
 	end
@@ -1215,33 +1060,18 @@ void main() {
 
 uniform float dt;
 
-]]..self.calcBCode..template([[
+]]..self.calcBCode..[[
 
-#define M_PI <?=('%.49f'):format(math.pi)?>
+#define M_PI ]]..('%.49f'):format(math.pi)..[[
 
 // used in (d/dphi, d/dlambda) finite-difference resolution
 uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
 
 ]]..self.calcB2Code..[[
 
-#define BxMin <?=clnumber(BStat.x.min)?>
-#define BxMax <?=clnumber(BStat.x.max)?>
-#define ByMin <?=clnumber(BStat.y.min)?>
-#define ByMax <?=clnumber(BStat.y.max)?>
-#define BzMin <?=clnumber(BStat.z.min)?>
-#define BzMax <?=clnumber(BStat.z.max)?>
-#define BDivMin <?=clnumber(BStat.div.min)?>
-#define BDivMax <?=clnumber(BStat.div.max)?>
-#define BDiv2DMin <?=clnumber(BStat.div2d.min)?>
-#define BDiv2DMax <?=clnumber(BStat.div2d.max)?>
-#define BCurlZMin <?=clnumber(BStat.curlZ.min)?>
-#define BCurlZMax <?=clnumber(BStat.curlZ.max)?>
-#define BCurlMagMin <?=clnumber(BStat.curlMag.min)?>
-#define BCurlMagMax <?=clnumber(BStat.curlMag.max)?>
-#define BMagMin <?=clnumber(BStat.mag.min)?>
-#define BMagMax <?=clnumber(BStat.mag.max)?>
-#define BMag2DMin <?=clnumber(BStat.mag2d.min)?>
-#define BMag2DMax <?=clnumber(BStat.mag2d.max)?>
+uniform vec4 BMin, BMax;		// x y z
+uniform vec4 B2Min, B2Max;		// div3d div2d curl2d curl3d
+uniform vec4 B3Min, B3Max;		// mag3d mag2d
 
 in vec2 texcoordv;
 out vec4 fragColor;
@@ -1263,7 +1093,7 @@ void main() {
 	vec3 B = calcB(plh);
 	vec4 B2 = calcB2(plh);
 
-	<?=overlay.code?>
+]]..overlay.code..[[
 
 	fragColor = mix(
 		texture(earthTex, vec2(texcoordv.x, 1. - texcoordv.y)),
@@ -1272,12 +1102,6 @@ void main() {
 	fragColor.a = alpha;
 }
 ]],
-				{
-					overlay = overlay,
-					BStat = BStat,
-					clnumber = clnumber,
-				}
-			),
 			uniforms = table({
 				earthTex = 0,
 				gradTex = 1,
@@ -2011,7 +1835,7 @@ function App:update(...)
 		self.arrowFieldSceneObj.uniforms.arrowLatDim = guivars.arrowLatDim
 		self.arrowFieldSceneObj.uniforms.arrowLonDim = guivars.arrowLonDim
 		self.arrowFieldSceneObj.uniforms.arrowEvenDistribute = guivars.arrowEvenDistribute
-		self.arrowFieldSceneObj.uniforms.BMagMax = BStat.mag.max
+		self.arrowFieldSceneObj.uniforms.BMagMax = self.BStat.mag.max
 		self.arrowFieldSceneObj.uniforms.arrowScale = guivars.arrowScale
 
 		self.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
@@ -2025,7 +1849,7 @@ function App:update(...)
 	if guivars.doDrawFieldLines then
 		self.fieldLineSceneObj.texs[1] = gradTex
 		self.fieldLineSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-		self.fieldLineSceneObj.uniforms.BMag = {BStat.mag.min, BStat.mag.max}
+		self.fieldLineSceneObj.uniforms.BMag = {self.BStat.mag.min, self.BStat.mag.max}
 
 		-- TODO if we're using weights then why do we need the 'chartIs3D' flag?
 		self.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
@@ -2039,11 +1863,7 @@ function App:update(...)
 
 	gl.glEnable(gl.GL_BLEND)
 
-	-- why cull each side separately?
-	--gl.glCullFace(gl.GL_FRONT)
 	chart:draw(self, shader, gradTex)
-	--gl.glCullFace(gl.GL_BACK)
-	--chart:draw(self, shader, gradTex)
 
 	gl.glDisable(gl.GL_DEPTH_TEST)
 	gl.glDisable(gl.GL_BLEND)
