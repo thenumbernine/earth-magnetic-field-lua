@@ -670,8 +670,8 @@ function App:initGL(...)
 	-- used for determining ranges, tho those ranges are invalide for any other times and altitudes
 	-- and in js-emulation it runs very slow
 	-- so i might try to get rid of this ...
-	local londim = 144	-- 1440	 -- dimension in 2D x dir / spherical phi / globe lambda dir
-	local latdim = 72	-- 720	 -- dimension in 2D y dir / spherical theta / globe phi dir
+	local londim = 128	-- 1440	 -- dimension in 2D x dir / spherical phi / globe lambda dir
+	local latdim = 64	-- 720	 -- dimension in 2D y dir / spherical theta / globe phi dir
 
 	-- fbo is used for stats calcs and for field line integration
 	self.fbo = GLFBO()
