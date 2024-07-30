@@ -16,5 +16,6 @@ build = {
 	type = "builtin",
 	modules = {
 		["earth-magnetic-field.run"] = "run.lua"
+		["earth-magnetic-field.reduce"] = "reduce.lua"
 	}
 }
