@@ -673,8 +673,8 @@ function App:initGL(...)
 	-- used for determining ranges, tho those ranges are invalide for any other times and altitudes
 	-- and in js-emulation it runs very slow
 	-- so i might try to get rid of this ...
-	local londim = 1440
-	local latdim = 720
+	local londim = 144	--1440
+	local latdim = 72	--720
 
 	-- fbo is used for stats calcs and for field line integration
 	self.fbo = GLFBO()
@@ -820,7 +820,7 @@ vec4 calcB2(vec3 plh) {
 }
 ]]
 
-	self.calcB2SceneObj = GLSceneObject{
+	self.calcB2TexSceneObj = GLSceneObject{
 		program = {
 			version = 'latest',
 			precision = 'best',
@@ -853,7 +853,7 @@ void main() {
 		geometry = self.quadGeom,
 	}
 
-	self.calcB3SceneObj = GLSceneObject{
+	self.calcB3TexSceneObj = GLSceneObject{
 		program = {
 			version = 'latest',
 			precision = 'best',
@@ -877,7 +877,7 @@ void main() {
 
 	local GLReduce = require 'reduce'
 	local reducePP = GLReduce:makePingPong{tex=self.BTex, fbo=self.fbo}
-	local minReduce = GLReduce{
+	self.minReduce = GLReduce{
 		fbo = self.fbo,
 		pingpong = reducePP,
 		geometry = self.quadGeom,
@@ -889,7 +889,7 @@ void main() {
 			end
 		end
 	}
-	local maxReduce = GLReduce{
+	self.maxReduce = GLReduce{
 		fbo = self.fbo,
 		pingpong = reducePP,
 		geometry = self.quadGeom,
@@ -902,78 +902,7 @@ void main() {
 		end
 	}
 
-	self.fbo:draw{
-		viewport = {0, 0, londim, latdim},
-		dest = self.BTex,
-		callback = function()
-			self.calcBTexSceneObj:draw()
-		end,
-	}
-
-	self.fbo:draw{
-		viewport = {0, 0, londim, latdim},
-		dest = self.B2Tex,
-		callback = function()
-			self.calcB2SceneObj:draw()
-		end,
-	}
-
-	self.fbo:draw{
-		viewport = {0, 0, londim, latdim},
-		dest = self.B3Tex,
-		callback = function()
-			self.calcB3SceneObj:draw()
-		end,
-	}
-
-	self.BStat = table{
-		'x', 'y', 'z',
-		'div', 'div2d', 'curlZ', 'curlMag',
-		 'mag', 'mag2d'
-	}:mapi(function(k)
-		return {}, k
-	end):setmetatable(nil)
-
-	timer('generating stats', function()
--- [[
-		local BMin = minReduce(self.BTex)
-		local BMax = maxReduce(self.BTex)
---print('reduce B min', BMin, 'max', BMax)
-		local B2Min = minReduce(self.B2Tex)
-		local B2Max = maxReduce(self.B2Tex)
---print('reduce B2 min', B2Min, 'max', B2Max)
-		local B3Min = minReduce(self.B3Tex)
-		local B3Max = maxReduce(self.B3Tex)
---print('reduce B3 min', B3Min, 'max', B3Max)
---]]
-
-		self.BStat.x.min = BMin.x			self.BStat.x.max = BMax.x
-		self.BStat.y.min = BMin.y			self.BStat.y.max = BMax.y
-		self.BStat.z.min = BMin.z			self.BStat.z.max = BMax.z
-		self.BStat.div.min = B2Min.x		self.BStat.div.max = B2Max.x
-		self.BStat.div2d.min = B2Min.y		self.BStat.div2d.max = B2Max.y
-		self.BStat.curlZ.min = B2Min.z		self.BStat.curlZ.max = B2Max.z
-		self.BStat.curlMag.min = B2Min.w	self.BStat.curlMag.max = B2Max.w
-		self.BStat.mag.min = B3Min.x		self.BStat.mag.max = B3Max.x
-		self.BStat.mag2d.min = B3Min.y		self.BStat.mag2d.max = B3Max.y
-
-		print('BStat')
-		print(require 'ext.tolua'(self.BStat))
---[[ stats should look like for wmm2020 dt=0
-x = {min = -16735.287109375, max = 41797.078125, avg = 17984.161021002, sqavg = 460231098.77605, stddev = 11696.198149258, count = 1036800},
-y = {min = -17571.607421875, max = 16772.9140625, avg = 0.00060528925769373, sqavg = 42031905.017686, stddev = 6483.2017566698, count = 1036800},
-z = {min = -66933.3984375, max = 60970.375, avg = 1180.7201683604, sqavg = 1732190539.499, stddev = 41602.841722447, count = 1036800},
-div = {min = -4.3255414962769, max = 4.7061634063721, avg = 0.0019280310092957, sqavg = 0.044430527339689, stddev = 0.2107766828568, count = 1036800},
-div2d = {min = -4.2783694267273, max = 4.6579914093018, avg = 0.0029287106643504, sqavg = 0.039302149729322, stddev = 0.19822606383411, count = 1036800},
-curlZ = {min = -104.66393280029, max = 103.64836120605, avg = 1.1786829213153e-08, sqavg = 7.8592639803675, stddev = 2.8034378859478, count = 1036800},
-curlMag = {min = 0.00051679083844647, max = 104.75435638428, avg = 0.16494477450588, sqavg = 7.9169097917121, stddev = 2.8088615154677, count = 1036800},
-mag = {min = 22232.017209054, max = 66990.328957622, avg = 45853.59896298, sqavg = 2234453543.2928, stddev = 11484.816299572, count = 1036800},
-mag2d = {min = 29.5594549176, max = 41800.698442297, avg = 20242.527057979, sqavg = 502263003.79371, stddev = 9617.85330002, count = 1036800},
---]]
-	end)
---]=]
-
-	glreport'here'
+	self:recalcBStats()
 
 	local overlayVertexCode = chartCode..template([[
 
@@ -1663,11 +1592,86 @@ function App:integrateFieldLines()
 glreport'here'
 end
 
+function App:recalcBStats()
+	self.calcBTexSceneObj.uniforms.dt = guivars.fieldDT
+	self.fbo:draw{
+		viewport = {0, 0, self.BTex.width, self.BTex.height},
+		dest = self.BTex,
+		callback = function()
+			self.calcBTexSceneObj:draw()
+		end,
+	}
+
+	self.calcB2TexSceneObj.uniforms.dt = guivars.fieldDT
+	self.fbo:draw{
+		viewport = {0, 0, self.BTex.width, self.BTex.height},
+		dest = self.B2Tex,
+		callback = function()
+			self.calcB2TexSceneObj:draw()
+		end,
+	}
+
+	self.calcB3TexSceneObj.uniforms.dt = guivars.fieldDT
+	self.fbo:draw{
+		viewport = {0, 0, self.BTex.width, self.BTex.height},
+		dest = self.B3Tex,
+		callback = function()
+			self.calcB3TexSceneObj:draw()
+		end,
+	}
+
+	self.BStat = table{
+		'x', 'y', 'z',
+		'div', 'div2d', 'curlZ', 'curlMag',
+		 'mag', 'mag2d'
+	}:mapi(function(k)
+		return {}, k
+	end):setmetatable(nil)
+
+	timer('generating stats', function()
+-- [[
+		local BMin = self.minReduce(self.BTex)
+		local BMax = self.maxReduce(self.BTex)
+--print('reduce B min', BMin, 'max', BMax)
+		local B2Min = self.minReduce(self.B2Tex)
+		local B2Max = self.maxReduce(self.B2Tex)
+--print('reduce B2 min', B2Min, 'max', B2Max)
+		local B3Min = self.minReduce(self.B3Tex)
+		local B3Max = self.maxReduce(self.B3Tex)
+--print('reduce B3 min', B3Min, 'max', B3Max)
+--]]
+
+		self.BStat.x.min = BMin.x			self.BStat.x.max = BMax.x
+		self.BStat.y.min = BMin.y			self.BStat.y.max = BMax.y
+		self.BStat.z.min = BMin.z			self.BStat.z.max = BMax.z
+		self.BStat.div.min = B2Min.x		self.BStat.div.max = B2Max.x
+		self.BStat.div2d.min = B2Min.y		self.BStat.div2d.max = B2Max.y
+		self.BStat.curlZ.min = B2Min.z		self.BStat.curlZ.max = B2Max.z
+		self.BStat.curlMag.min = B2Min.w	self.BStat.curlMag.max = B2Max.w
+		self.BStat.mag.min = B3Min.x		self.BStat.mag.max = B3Max.x
+		self.BStat.mag2d.min = B3Min.y		self.BStat.mag2d.max = B3Max.y
+
+--[[ stats should look like for wmm2020 dt=0
+x = {min = -16735.287109375, max = 41797.078125, avg = 17984.161021002, sqavg = 460231098.77605, stddev = 11696.198149258, count = 1036800},
+y = {min = -17571.607421875, max = 16772.9140625, avg = 0.00060528925769373, sqavg = 42031905.017686, stddev = 6483.2017566698, count = 1036800},
+z = {min = -66933.3984375, max = 60970.375, avg = 1180.7201683604, sqavg = 1732190539.499, stddev = 41602.841722447, count = 1036800},
+div = {min = -4.3255414962769, max = 4.7061634063721, avg = 0.0019280310092957, sqavg = 0.044430527339689, stddev = 0.2107766828568, count = 1036800},
+div2d = {min = -4.2783694267273, max = 4.6579914093018, avg = 0.0029287106643504, sqavg = 0.039302149729322, stddev = 0.19822606383411, count = 1036800},
+curlZ = {min = -104.66393280029, max = 103.64836120605, avg = 1.1786829213153e-08, sqavg = 7.8592639803675, stddev = 2.8034378859478, count = 1036800},
+curlMag = {min = 0.00051679083844647, max = 104.75435638428, avg = 0.16494477450588, sqavg = 7.9169097917121, stddev = 2.8088615154677, count = 1036800},
+mag = {min = 22232.017209054, max = 66990.328957622, avg = 45853.59896298, sqavg = 2234453543.2928, stddev = 11484.816299572, count = 1036800},
+mag2d = {min = 29.5594549176, max = 41800.698442297, avg = 20242.527057979, sqavg = 502263003.79371, stddev = 9617.85330002, count = 1036800},
+--]]
+	end)
+--]=]
+glreport'here'
+end
+
+--[=[
 local function degmintofrac(deg, min, sec)
 	return deg + (1/60) * (min + (1/60) * sec)
 end
 
---[=[
 local function drawReading(info)
 	local chart = info.chart
 
@@ -1828,8 +1832,8 @@ function App:update(...)
 
 	chart:draw(self, shader, gradTex)
 
-	gl.glDisable(gl.GL_DEPTH_TEST)
 	gl.glDisable(gl.GL_BLEND)
+	gl.glDisable(gl.GL_DEPTH_TEST)
 
 	glreport'here'
 
@@ -1913,6 +1917,7 @@ function App:updateGUI()
 	-- can I just factor out the dt?
 	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
 	if ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', -50, 50) then
+		self:recalcBStats()
 		self:integrateFieldLines()
 	end
 end

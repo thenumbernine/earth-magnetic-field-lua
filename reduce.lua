@@ -157,13 +157,7 @@ function GLReduce:__call(tex)
 				self.sceneobj.uniforms.texSize = {srcTex.width, srcTex.height}
 				self.sceneobj.texs[1] = srcTex
 				self.sceneobj:draw()
---[[				
-local tmp = ffi.new(ctype..'[?]', dstW * dstH)
-gl.glReadPixels(0, 0, dstW, dstH, tex.format, tex.type, tmp)
-for i=0,dstW * dstH - 1 do
-	print(i, tmp[i])
-end
---]]
+				
 				-- if it's the last one ...
 				-- TODO while fbo is bound
 				-- but TODO dont do the reduce if the intiial size is too small
