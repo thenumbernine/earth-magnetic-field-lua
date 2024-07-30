@@ -352,8 +352,9 @@ Bz = -d/dheight points inwards
 --]]
 
 local BStat = StatSet(
-	'mag', 'x', 'y', 'z', 'mag2d',
-	'div', 'div2d', 'curlZ', 'curlMag'
+	'x', 'y', 'z',
+	'div', 'div2d', 'curlZ', 'curlMag',
+	 'mag', 'mag2d'
 )
 for i,stat in ipairs(BStat) do stat.onlyFinite = true end
 
@@ -735,23 +736,20 @@ vec4 calcB2(vec3 plh) {
 
 	-- size can be arbitrary
 	-- but the WMM model is for 15 mins, so [360,180] x4 = 1440 x 720
-	local BData = ffi.new('vec4f_t[?]', londim * latdim)
-	local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
 	timer('generating B field', function()
 
-		-- TODO better way to get stats?  
+		-- TODO better way to get stats?
 		-- Transform Feedback?
 		-- input = (lat lon) pairs
-		-- ... fill 
-		
+		-- ... fill
+
 		-- TODO is this faster than a unit quad fbo / texel write?
 
 		local GLTransformFeedbackBuffer = require 'gl.transformfeedbackbuffer'
-		
+
 		local phiLambdaBuf = GLTransformFeedbackBuffer{
 			size = londim * latdim * ffi.sizeof'GLfloat' * 2,
-			--usage = gl.GL_STATIC_READ,	-- static read + static draw?
-			usage = gl.GL_DYNAMIC_DRAW,
+			usage = gl.GL_STATIC_READ,
 			count = londim * latdim,
 			dim = 2,
 			type = gl.GL_FLOAT,
@@ -782,7 +780,7 @@ void main() {
 				mode = 'interleaved',
 			},
 		}
-	
+
 timer('generating (phi, lambda) grid', function()
 		phiLambdaBuf:bind()
 			:bindBase()
@@ -822,27 +820,31 @@ print('latLonCPU', latLonCPU)
 		setmetatable(phiLambdaBuf, GLArrayBuffer)
 
 		-- then transform to output to B and B2 fields
-		-- [[ interleaved 8 component buffer
+		--[[ interleaved 12 component buffer
 		local BBuf = GLTransformFeedbackBuffer{
-			--size = londim * latdim * ffi.sizeof'GLfloat' * 4,
-			size = londim * latdim * ffi.sizeof'GLfloat' * 8,
-			--usage = gl.GL_STATIC_READ,
-			usage = gl.GL_DYNAMIC_DRAW,
+			size = londim * latdim * ffi.sizeof'GLfloat' * 12,
+			usage = gl.GL_STATIC_READ,
 			count = londim * latdim,
-			--dim = 4,
-			dim = 8,
+			dim = 12,
 			type = gl.GL_FLOAT,
 		}:unbind()
 		--]]
-		--[[ separate 4 component buffers
+		-- [[ separate 4 component buffers
 		local BBuf = GLTransformFeedbackBuffer{
 			size = londim * latdim * ffi.sizeof'GLfloat' * 4,
 			usage = gl.GL_DYNAMIC_DRAW,
 			count = londim * latdim,
 			dim = 4,
 			type = gl.GL_FLOAT,
-		}:unbind()	
+		}:unbind()
 		local B2Buf = GLTransformFeedbackBuffer{
+			size = londim * latdim * ffi.sizeof'GLfloat' * 4,
+			usage = gl.GL_STATIC_READ,
+			count = londim * latdim,
+			dim = 4,
+			type = gl.GL_FLOAT,
+		}:unbind()
+		local B3Buf = GLTransformFeedbackBuffer{
 			size = londim * latdim * ffi.sizeof'GLfloat' * 4,
 			usage = gl.GL_STATIC_READ,
 			count = londim * latdim,
@@ -863,13 +865,19 @@ uniform vec2 latLonDim;	// (latdim, londim)
 ..self.calcB2Code
 ..[[
 
-layout(location=0) in vec2 phiLambda;
+in vec2 phiLambda;
 out vec4 B;		// Bx By Bz 0
 out vec4 B2;	// div3d, div2d, curl2d, curl3d
+out vec4 B3;	// mag3d, mag2d
 void main() {
 	vec3 plh = vec3(phiLambda, 0.);
 	B = vec4(calcB(plh), 0.);	// B.xyz ... TODO store BMag in B.w ?
 	B2 = calcB2(plh);			// div(B.xyz), div(B.xy), curl(B.xy), |curl(B.xyz)|
+	B3 = vec4(
+		length(B.xyz),
+		length(B.xy),
+		0.,
+		0.);
 }
 ]],
 			uniforms = {
@@ -882,8 +890,9 @@ void main() {
 			transformFeedback = {
 				'B',
 				'B2',
-				mode = 'interleaved',
-				--mode = 'separate',
+				'B3',
+				--mode = 'interleaved',
+				mode = 'separate',
 			},
 		}
 		for name,attr in pairs(genBCalcProgram.attrs) do
@@ -895,9 +904,12 @@ timer('generating B and B2 using xform feedback', function()
 			:bindBase(0)
 			:unbind()
 		--]]
-		--[[ separate
+		-- [[ separate
 		B2Buf:bind()
 			:bindBase(1)
+			:unbind()
+		B3Buf:bind()
+			:bindBase(2)
 			:unbind()
 		--]]
 		gl.glEnable(gl.GL_RASTERIZER_DISCARD)
@@ -912,26 +924,151 @@ timer('generating B and B2 using xform feedback', function()
 		genBCalcProgram:useNone()
 end)
 
+		-- change BBuf from GLTransformFeedbackBuffer to GLArrayBuffer
+		setmetatable(BBuf, GLArrayBuffer)
+		setmetatable(B2Buf, GLArrayBuffer)
+		setmetatable(B3Buf, GLArrayBuffer)
+
 timer('cpu computing BStats', function()
+		-- transform-feedback find min/max across interleaved float inputs ...
+
+--[=[ try to reduce on the gpu
+		-- reduce
+		-- ... means we want textures bound so we can read more than one at a time ...
+		-- ... means we want to treat it as a tex instead of a buffer (until webgl gets SSBO's ...)
+		-- ... means maybe transform feedback is overrated and I should've just used a FBO up until this point
+		local reduceTex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_NEAREST,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}:unbind()
+
+		local reduce2Tex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_NEAREST,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}:unbind()
+
+		--[[
+		run this on width/m, height/m for reduce count m x m
+		--]]
+		local minReduceKernel = GLProgram{
+			version = 'latest',
+			precision = 'best',
+			shaders = {self.quadGeomVertexShader},
+			fragmentCode = [[
+uniform sampler2D tex;
+uniform vec2 offset;
+in vec2 texcoordv;
+out vec4 fragColor;
+void main() {
+	fragColor = min(
+		min(
+			texture(tex, texcoordv),
+			texture(tex, texcoordv + vec2(offset.x, 0.))
+		),
+		min(
+			texture(tex, texcoordv + vec2(0., offset.y)),
+			texture(tex, texcoordv + offset)
+		)
+	);
+}
+]],
+			attrs = {
+				vertexes = self.quadGeom.vertexes,
+			},
+		}:useNone()
+
+		-- now while we're here, glTexSubImage2D only red channel into reduceTex
+		-- TODO can we skip every 12?  with offset?  or nah?  mannnn too many limitations ...
+		-- I might have to either
+		-- a) use 3 out buffers from transform feedback or
+		-- b) just use FBO's from the start
+		-- [[
+		BBuf:bind(gl.GL_PIXEL_UNPACK_BUFFER)
+		gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, reduceTex.width, reduceTex.height, gl.GL_RGBA, gl.GL_FLOAT, ffi.cast('void*', 0))
+		BBuf:unbind(gl.GL_PIXEL_UNPACK_BUFFER)
+		GLTex2D:unbind()
+		--]]
+
+		-- should reduce as ...
+		-- 1440, 720, 360, 180, 90, 45, 23, 12, 6, 3, 2, 1
+
+		local BData = ffi.new('vec4f_t[?]', londim * latdim)
+		local w = reduceTex.width
+		local h = reduceTex.height
+		local srcTex = reduceTex
+		local dstTex = reduce2Tex
+		local offset = .5
+		repeat
+			self.fbo:bind()
+				:setColorAttachmentTex2D(dstTex.id)
+			local res, err = self.fbo.check()
+			if not res then print(err) end
+			local newW = math.ceil(w / 2)
+			local newH = math.ceil(h / 2)
+			gl.glViewport(0, 0, newW, newH)
+
+			minReduceKernel:use()
+			minReduceKernel:setUniforms{
+				mvProjMat = self.unitProjMat.ptr,
+				offset = {offset, offset},
+			}
+			srcTex:bind()
+			self.quadGeom:draw()
+			minReduceKernel:useNone()
+
+			self.fbo:unbind()
+
+			print('iter', w, h)
+			dstTex:toCPU(BData)
+			for i=0,newW*newH-1 do
+				print(i, BData[i])
+			end
+
+			srcTex, stTex = dstTex, srcTex
+			w, h = newW, newH
+			offset = offset * .5
+		until w <= 1 or h <= 1
+os.exit()
+--]=]
+
 		local statgens = table{
-			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) end,	-- |B_xyz| ... not :length() since it's vec4...
-			function(B, B2) return B.x end,		-- B_x
-			function(B, B2) return B.y end,		-- B_y
-			function(B, B2) return B.z end,		-- B_z
-			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y) end,	-- |B_xy|
-			function(B, B2) return B2.x end,	-- ∇⋅B
-			function(B, B2) return B2.y end,	-- ∇⋅(B_xy)
-			function(B, B2) return B2.z end,	-- (∇×B)_z
-			function(B, B2) return B2.w end,	-- |∇×B|
+			-- matches upwith BStat declaration
+			function(B, B2, B3) return B.x end,		-- B_x
+			function(B, B2, B3) return B.y end,		-- B_y
+			function(B, B2, B3) return B.z end,		-- B_z
+			function(B, B2, B3) return B2.x end,	-- ∇⋅B
+			function(B, B2, B3) return B2.y end,	-- ∇⋅(B_xy)
+			function(B, B2, B3) return B2.z end,	-- (∇×B)_z
+			function(B, B2, B3) return B2.w end,	-- |∇×B|
+			function(B, B2, B3) return B3.x end,	-- |B_xyz|
+			function(B, B2, B3) return B3.y end,	-- |B_xy|
 		}
-	
-		-- [[ interleaved 8 component
-		local BData = ffi.new('vec4f_t[?]', 2 * londim * latdim)
+
+		--[[ interleaved 8 component
+		local BData = ffi.new('vec4f_t[?]', 3 * londim * latdim)
 		local BMap = ffi.cast('vec4f_t*', BBuf:bind():map(gl.GL_MAP_READ_BIT, 0, BBuf.size))
 		ffi.copy(BData, BMap, BBuf.size)
 		BBuf:unmap():unbind()
 		--]]
-		--[[ separate 4 components
+		-- [[ separate 4 components
 		local BData = ffi.new('vec4f_t[?]', londim * latdim)
 		local BMap = ffi.cast('vec4f_t*', BBuf:bind():map(gl.GL_MAP_READ_BIT, 0, BBuf.size))
 		ffi.copy(BData, BMap, BBuf.size)
@@ -940,25 +1077,31 @@ timer('cpu computing BStats', function()
 		local B2Map = ffi.cast('vec4f_t*', B2Buf:bind():map(gl.GL_MAP_READ_BIT, 0, B2Buf.size))
 		ffi.copy(B2Data, B2Map, BBuf.size)
 		B2Buf:unmap():unbind()
+		local B3Data = ffi.new('vec4f_t[?]', londim * latdim)
+		local B3Map = ffi.cast('vec4f_t*', B3Buf:bind():map(gl.GL_MAP_READ_BIT, 0, B3Buf.size))
+		ffi.copy(B3Data, B3Map, BBuf.size)
+		B3Buf:unmap():unbind()
 		--]]
-		
+
 		for e=0,BBuf.count-1 do
-			-- [[ interleaved 8 component
-			local B = BData[0 + 2 * e]
-			local B2 = BData[1 + 2 * e]
+			--[[ interleaved 8 component
+			local B = BData[0 + 3 * e]
+			local B2 = BData[1 + 3 * e]
+			local B3 = BData[2 + 3 * e]
 			--]]
-			--[[ separate 4 components
+			-- [[ separate 4 components
 			local B = BData[e]
 			local B2 = B2Data[e]
+			local B3 = B3Data[e]
 			--]]
 			BStat:accum(
 				statgens:mapi(function(f)
-					return f(B, B2)
+					return f(B, B2, B3)
 				end):unpack()
 			)
 		end
 end)
-glreport'here'		
+glreport'here'
 		print('BStat')
 		print(BStat)
 --[[ stats should look like for wmm2020 dt=0
@@ -1081,10 +1224,6 @@ uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
 
 ]]..self.calcB2Code..[[
 
-#define BMagMin <?=clnumber(BStat.mag.min)?>
-#define BMagMax <?=clnumber(BStat.mag.max)?>
-#define BMag2DMin <?=clnumber(BStat.mag2d.min)?>
-#define BMag2DMax <?=clnumber(BStat.mag2d.max)?>
 #define BxMin <?=clnumber(BStat.x.min)?>
 #define BxMax <?=clnumber(BStat.x.max)?>
 #define ByMin <?=clnumber(BStat.y.min)?>
@@ -1099,6 +1238,10 @@ uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
 #define BCurlZMax <?=clnumber(BStat.curlZ.max)?>
 #define BCurlMagMin <?=clnumber(BStat.curlMag.min)?>
 #define BCurlMagMax <?=clnumber(BStat.curlMag.max)?>
+#define BMagMin <?=clnumber(BStat.mag.min)?>
+#define BMagMax <?=clnumber(BStat.mag.max)?>
+#define BMag2DMin <?=clnumber(BStat.mag2d.min)?>
+#define BMag2DMax <?=clnumber(BStat.mag2d.max)?>
 
 in vec2 texcoordv;
 out vec4 fragColor;
