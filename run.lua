@@ -694,8 +694,10 @@ void main() {
 ]],
 	}
 
-	local piDef = '#define M_PI '..('%.49f'):format(math.pi)
+	local piDef = 'const float M_PI = '..('%.49f'):format(math.pi)..';'
 
+	-- used for the B2Tex, which itself is used for magnitude ranges
+	-- also used for overlay obj's fragment code, for the same thing
 	-- module depends M_PI, uniform vec2 latLonDim
 	self.calcB2Code = [[
 vec4 calcB2(vec3 plh) {
@@ -732,15 +734,8 @@ vec4 calcB2(vec3 plh) {
 	-- TODO recalculate these when 'dt' changes
 	local londim = 1440
 	local latdim = 720
-
-	-- fbo is used for stats calcs and for field line integration
-	self.fbo = GLFBO()
-		:unbind()
-glreport'here'
-
-	local BTex
-	timer('generating B field', function()
-		BTex = GLTex2D{
+	local function makeLatLonFloatTex()
+		return GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
@@ -753,19 +748,28 @@ glreport'here'
 				t = gl.GL_REPEAT,
 			},
 		}:unbind()
+	end
+
+	-- fbo is used for stats calcs and for field line integration
+	self.fbo = GLFBO()
+		:unbind()
 glreport'here'
 
-		local calcBSceneObj = GLSceneObject{
-			program = {
-				version = 'latest',
-				precision = 'best',
-				shaders = {self.quadGeomVertexShader},
-				fragmentCode = [[
+	local piDef = '#define M_PI '..('%.49f'):format(math.pi)
+
+	self.BTex = makeLatLonFloatTex()
+	self.B2Tex = makeLatLonFloatTex()
+	self.B3Tex = makeLatLonFloatTex()
+
+	self.calcBTexSceneObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			header = piDef,
+			shaders = {self.quadGeomVertexShader},
+			fragmentCode = [[
 uniform float dt;
 ]]..self.calcBCode..[[
-
-#define M_PI ]]..('%.49f'):format(math.pi)..[[
-
 in vec2 texcoordv;
 out vec4 fragColor;
 void main() {
@@ -775,42 +779,17 @@ void main() {
 	fragColor = vec4(B, 1.);
 }
 ]],
-				uniforms = {
-					dt = 0,
-				},
+			uniforms = {
+				dt = 0,
 			},
-			geometry = self.quadGeom,
-		}
+		},
+		geometry = self.quadGeom,
+	}
 
-		self.fbo:draw{
-			viewport = {0, 0, londim, latdim},
-			dest = BTex,
-			callback = function()
-				calcBSceneObj:draw()
-			end,
-		}
-glreport'here'
-	end)
-
-	local B2Tex
-	timer('generating div B and curl B', function()
-		B2Tex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,
-			width = londim,
-			height = latdim,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}:unbind()
 glreport'here'
 
-		-- module depends M_PI, uniform vec2 latLonDim
-		self.calcB2Code = [[
+	-- module depends M_PI, uniform vec2 latLonDim
+	self.calcB2Code = [[
 vec4 calcB2(vec3 plh) {
 	float latdim = latLonDim.x;
 	float londim = latLonDim.y;
@@ -841,18 +820,16 @@ vec4 calcB2(vec3 plh) {
 }
 ]]
 
-		local calcB2SceneObj = GLSceneObject{
-			program = {
-				version = 'latest',
-				precision = 'best',
-				shaders = {self.quadGeomVertexShader},
-				fragmentCode = [[
-
+	self.calcB2SceneObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			header = piDef,
+			shaders = {self.quadGeomVertexShader},
+			fragmentCode = [[
 uniform float dt;
 
 ]]..self.calcBCode..[[
-
-#define M_PI ]]..('%.49f'):format(math.pi)..[[
 
 // used in (d/dphi, d/dlambda) finite-difference resolution
 uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
@@ -868,47 +845,20 @@ void main() {
 	fragColor = calcB2(vec3(phi, lambda, 0.));
 }
 ]],
-				uniforms = {
-					dt = 0,
-					latLonDim = {latdim, londim},
-				},
+			uniforms = {
+				dt = 0,
+				latLonDim = {latdim, londim},
 			},
-			geometry = self.quadGeom,
-		}
+		},
+		geometry = self.quadGeom,
+	}
 
-		-- only used for stat calc
-		self.fbo:draw{
-			viewport = {0, 0, londim, latdim},
-			dest = B2Tex,
-			callback = function()
-				calcB2SceneObj:draw()
-			end,
-		}
-glreport'here'
-	end)
-
-	local B3Tex
-	timer('generating mag B range', function()
-		B3Tex = GLTex2D{
-			internalFormat = gl.GL_RGBA32F,
-			width = londim,
-			height = latdim,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
-			minFilter = gl.GL_NEAREST,
-			magFilter = gl.GL_NEAREST,
-			wrap = {
-				s = gl.GL_REPEAT,
-				t = gl.GL_REPEAT,
-			},
-		}:unbind()
-
-		local calcB3SceneObj = GLSceneObject{
-			program = {
-				version = 'latest',
-				precision = 'best',
-				shaders = {self.quadGeomVertexShader},
-				fragmentCode = [[
+	self.calcB3SceneObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			shaders = {self.quadGeomVertexShader},
+			fragmentCode = [[
 in vec2 texcoordv;
 uniform sampler2D BTex;
 out vec4 fragColor;
@@ -917,22 +867,64 @@ void main() {
 	fragColor = vec4(length(B.xyz), length(B.xy), 0., 1.);
 }
 ]],
-				uniforms = {
-					BTex = 0,
-				},
+			uniforms = {
+				BTex = 0,
 			},
-			texs = {BTex},
-			geometry = self.quadGeom,
-		}
+		},
+		texs = {self.BTex},
+		geometry = self.quadGeom,
+	}
 
-		self.fbo:draw{
-			viewport = {0, 0, londim, latdim},
-			dest = B3Tex,
-			callback = function()
-				calcB3SceneObj:draw()
-			end,
-		}
-	end)
+	local GLReduce = require 'reduce'
+	local reducePP = GLReduce:makePingPong{tex=self.BTex, fbo=self.fbo}
+	local minReduce = GLReduce{
+		fbo = self.fbo,
+		pingpong = reducePP,
+		geometry = self.quadGeom,
+		vertexShader = self.quadGeomVertexShader,
+		gpuop = function(a,b) return 'min('..a..', '..b..')' end,
+		cpuop = function(a,b,c)
+			for i=0,3 do
+				c.s[i] = math.min(a.s[i], b.s[i])
+			end
+		end
+	}
+	local maxReduce = GLReduce{
+		fbo = self.fbo,
+		pingpong = reducePP,
+		geometry = self.quadGeom,
+		vertexShader = self.quadGeomVertexShader,
+		gpuop = function(a,b) return 'max('..a..', '..b..')' end,
+		cpuop = function(a,b,c)
+			for i=0,3 do
+				c.s[i] = math.max(a.s[i], b.s[i])
+			end
+		end
+	}
+
+	self.fbo:draw{
+		viewport = {0, 0, londim, latdim},
+		dest = self.BTex,
+		callback = function()
+			self.calcBTexSceneObj:draw()
+		end,
+	}
+
+	self.fbo:draw{
+		viewport = {0, 0, londim, latdim},
+		dest = self.B2Tex,
+		callback = function()
+			self.calcB2SceneObj:draw()
+		end,
+	}
+
+	self.fbo:draw{
+		viewport = {0, 0, londim, latdim},
+		dest = self.B3Tex,
+		callback = function()
+			self.calcB3SceneObj:draw()
+		end,
+	}
 
 	self.BStat = table{
 		'x', 'y', 'z',
@@ -944,40 +936,14 @@ void main() {
 
 	timer('generating stats', function()
 -- [[
-		local GLReduce = require 'reduce'
-		local reducePP = GLReduce:makePingPong{tex=BTex, fbo=fbo}
-		local minReduce = GLReduce{
-			fbo = self.fbo,
-			pingpong = reducePP,
-			geometry = self.quadGeom,
-			vertexShader = self.quadGeomVertexShader,
-			gpuop = function(a,b) return 'min('..a..', '..b..')' end,
-			cpuop = function(a,b,c)
-				for i=0,3 do
-					c.s[i] = math.min(a.s[i], b.s[i])
-				end
-			end
-		}
-		local maxReduce = GLReduce{
-			fbo = self.fbo,
-			pingpong = reducePP,
-			geometry = self.quadGeom,
-			vertexShader = self.quadGeomVertexShader,
-			gpuop = function(a,b) return 'max('..a..', '..b..')' end,
-			cpuop = function(a,b,c)
-				for i=0,3 do
-					c.s[i] = math.max(a.s[i], b.s[i])
-				end
-			end
-		}
-		local BMin = minReduce(BTex)
-		local BMax = maxReduce(BTex)
+		local BMin = minReduce(self.BTex)
+		local BMax = maxReduce(self.BTex)
 --print('reduce B min', BMin, 'max', BMax)
-		local B2Min = minReduce(B2Tex)
-		local B2Max = maxReduce(B2Tex)
+		local B2Min = minReduce(self.B2Tex)
+		local B2Max = maxReduce(self.B2Tex)
 --print('reduce B2 min', B2Min, 'max', B2Max)
-		local B3Min = minReduce(B3Tex)
-		local B3Max = maxReduce(B3Tex)
+		local B3Min = minReduce(self.B3Tex)
+		local B3Max = maxReduce(self.B3Tex)
 --print('reduce B3 min', B3Min, 'max', B3Max)
 --]]
 
@@ -1055,13 +1021,12 @@ void main() {
 			version = 'latest',
 			precision = 'best',
 			vertexCode = overlayVertexCode,
-			fragmentCode = [[
+			fragmentCode =
+piDef..[[
 
 uniform float dt;
 
 ]]..self.calcBCode..[[
-
-#define M_PI ]]..('%.49f'):format(math.pi)..[[
 
 // used in (d/dphi, d/dlambda) finite-difference resolution
 uniform vec2 latLonDim;	//(latdim, londim) is (height, width)
