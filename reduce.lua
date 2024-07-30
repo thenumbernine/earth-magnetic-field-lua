@@ -1,6 +1,7 @@
 local ffi = require 'ffi'
 local assertindex = require 'ext.assert'.index
 local class = require 'ext.class'
+local vector = require 'ffi.cpp.vector-lua'
 local template = require 'template'
 local gl = require 'gl'
 local GLPingPong = require 'gl.pingpong'
@@ -9,24 +10,8 @@ local GLProgram = require 'gl.program'
 
 local GLReduce = class()
 
---[[ static helper
-args:
-	tex = tex to base off of
-	fbo = fbo to use (optional)
---]]
-function GLReduce:makePingPong(args)
-	local tex = assertindex(args, 'tex')
-	return GLPingPong{
-		fbo = args.fbo,
-		width = tex.width,
-		height = tex.height,
-		internalFormat = tex.internalFormat,
-		format = tex.format,
-		type = tex.type,
-		minFilter = gl.GL_NEAREST,
-		magFilter = gl.GL_NEAREST,
-	}
-end
+-- smallest width or height before switching to CPU reduce
+GLReduce.minSize = 1
 
 --[[
 args:
@@ -110,16 +95,8 @@ void main() {
 		program = self.program,
 		geometry = self.geometry,
 	}
-end
 
--- smallest width or height before switching to CPU reduce
-GLReduce.minSize = 4
-
-function GLReduce:__call(tex)
---print('GLReduce:__call', self.gpuop('a', 'b'))
-	tex = tex or self.tex
-	assert(tex, "need a source tex")
-
+	local tex = self.tex or self.pingpong:cur()
 	local ctype = assertindex(require 'gl.types'.ctypeForGLType, tex.type)
 	local channels = assertindex(require 'gl.tex'.channelsForFormat, tex.format)	-- TODO move this table in gl.types?
 	if channels == 1 then
@@ -132,6 +109,33 @@ function GLReduce:__call(tex)
 	else
 		error("idk what vector type to use for this many channels")
 	end
+
+	self.resultBuf = vector(ctype)
+end
+
+--[[ static helper
+args:
+	tex = tex to base off of
+	fbo = fbo to use (optional)
+--]]
+function GLReduce:makePingPong(args)
+	local tex = assertindex(args, 'tex')
+	return GLPingPong{
+		fbo = args.fbo,
+		width = tex.width,
+		height = tex.height,
+		internalFormat = tex.internalFormat,
+		format = tex.format,
+		type = tex.type,
+		minFilter = gl.GL_NEAREST,
+		magFilter = gl.GL_NEAREST,
+	}
+end
+
+function GLReduce:__call(tex)
+--print('GLReduce:__call', self.gpuop('a', 'b'))
+	tex = tex or self.tex
+	assert(tex, "need a source tex")
 
 -- TODO track this, maybe as a vector, maybe resize it, idk
 	local resultBuf
@@ -162,15 +166,14 @@ function GLReduce:__call(tex)
 				-- TODO while fbo is bound
 				-- but TODO dont do the reduce if the intiial size is too small
 				if nextdone then
-					gl.glViewport(0, 0, srcW, srcH)
-					resultBuf = ffi.new(ctype..'[?]', srcW * srcH)
-					gl.glReadPixels(0, 0, srcW, srcH, tex.format, tex.type, resultBuf)
+					self.resultBuf:resize(dstW * dstH)
+					gl.glReadPixels(0, 0, dstW, dstH, tex.format, tex.type, self.resultBuf.v)
 				end
 			end,
 		}
 		if nextdone then
-			for i=1,srcW * srcH - 1 do
-				self.cpuop(resultBuf[0], resultBuf[i], resultBuf[0])
+			for i=1,dstW * dstH-1 do
+				self.cpuop(self.resultBuf.v[0], self.resultBuf.v[i], self.resultBuf.v[0])
 			end
 			break
 		end
@@ -181,8 +184,7 @@ function GLReduce:__call(tex)
 		dstW = math.ceil(srcW / 2)
 		dstH = math.ceil(srcH / 2)
 	end
-	assert(resultBuf)
-	return resultBuf[0]
+	return self.resultBuf.v[0]
 end
 
 return GLReduce
