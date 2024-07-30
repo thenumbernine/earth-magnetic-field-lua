@@ -26,7 +26,6 @@ local GLProgram = require 'gl.program'
 local GLGeometry = require 'gl.geometry'
 local GLSceneObject = require 'gl.sceneobject'
 local clnumber = require 'cl.obj.number'
-local StatSet = require 'stat.set'
 
 
 -- Sets WGS-84 parameters
@@ -674,8 +673,8 @@ function App:initGL(...)
 	-- used for determining ranges, tho those ranges are invalide for any other times and altitudes
 	-- and in js-emulation it runs very slow
 	-- so i might try to get rid of this ...
-	local londim = js and 144 or 1440
-	local latdim = js and 72 or 720
+	local londim = 1440
+	local latdim = 720
 
 	-- fbo is used for stats calcs and for field line integration
 	self.fbo = GLFBO()
@@ -730,20 +729,18 @@ vec4 calcB2(vec3 plh) {
 ]]
 	-- lat/lon dim for surface statistics calculations
 	-- used for determining ranges, tho those ranges are invalide for any other times and altitudes
-	-- and in js-emulation it runs very slow
-	-- so i might try to get rid of this ...
-	local londim = js and 144 or 1440
-	local latdim = js and 72 or 720
+	-- TODO recalculate these when 'dt' changes
+	local londim = 1440
+	local latdim = 720
 
 	-- fbo is used for stats calcs and for field line integration
 	self.fbo = GLFBO()
 		:unbind()
 glreport'here'
 
-	local BData = ffi.new('vec4f_t[?]', londim * latdim)
-	local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
+	local BTex
 	timer('generating B field', function()
-		local BTex = GLTex2D{
+		BTex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
@@ -785,21 +782,19 @@ void main() {
 			geometry = self.quadGeom,
 		}
 
-		-- BData / B2Data is only used for stat computation
 		self.fbo:draw{
 			viewport = {0, 0, londim, latdim},
 			dest = BTex,
 			callback = function()
-				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 				calcBSceneObj:draw()
-				gl.glReadPixels(0, 0, BTex.width, BTex.height, gl.GL_RGBA, gl.GL_FLOAT, BData)
 			end,
 		}
 glreport'here'
 	end)
 
+	local B2Tex
 	timer('generating div B and curl B', function()
-		local B2Tex = GLTex2D{
+		B2Tex = GLTex2D{
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
@@ -886,65 +881,118 @@ void main() {
 			viewport = {0, 0, londim, latdim},
 			dest = B2Tex,
 			callback = function()
-				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 				calcB2SceneObj:draw()
-				gl.glReadPixels(0, 0, B2Tex.width, B2Tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2Data)
 			end,
 		}
 glreport'here'
 	end)
 
-	self.BStat = StatSet(
+	local B3Tex
+	timer('generating mag B range', function()
+		B3Tex = GLTex2D{
+			internalFormat = gl.GL_RGBA32F,
+			width = londim,
+			height = latdim,
+			format = gl.GL_RGBA,
+			type = gl.GL_FLOAT,
+			minFilter = gl.GL_NEAREST,
+			magFilter = gl.GL_NEAREST,
+			wrap = {
+				s = gl.GL_REPEAT,
+				t = gl.GL_REPEAT,
+			},
+		}:unbind()
+
+		local calcB3SceneObj = GLSceneObject{
+			program = {
+				version = 'latest',
+				precision = 'best',
+				shaders = {self.quadGeomVertexShader},
+				fragmentCode = [[
+in vec2 texcoordv;
+uniform sampler2D BTex;
+out vec4 fragColor;
+void main() {
+	vec4 B = texture(BTex, texcoordv);
+	fragColor = vec4(length(B.xyz), length(B.xy), 0., 1.);
+}
+]],
+				uniforms = {
+					BTex = 0,
+				},
+			},
+			texs = {BTex},
+			geometry = self.quadGeom,
+		}
+
+		self.fbo:draw{
+			viewport = {0, 0, londim, latdim},
+			dest = B3Tex,
+			callback = function()
+				calcB3SceneObj:draw()
+			end,
+		}
+	end)
+
+	self.BStat = table{
 		'x', 'y', 'z',
 		'div', 'div2d', 'curlZ', 'curlMag',
 		 'mag', 'mag2d'
-	)
-	for i,stat in ipairs(self.BStat) do stat.onlyFinite = true end
+	}:mapi(function(k)
+		return {}, k
+	end):setmetatable(nil)
 
 	timer('generating stats', function()
---[[ TODO		
+-- [[
 		local GLReduce = require 'reduce'
-		local BMin = GLReduce{
-			tex = BTex,
+		local reducePP = GLReduce:makePingPong{tex=BTex, fbo=fbo}
+		local minReduce = GLReduce{
 			fbo = self.fbo,
-			op = 'min',
-		}()
-		local BMax = GLReduce{
-			tex = BTex,
+			pingpong = reducePP,
+			geometry = self.quadGeom,
+			vertexShader = self.quadGeomVertexShader,
+			gpuop = function(a,b) return 'min('..a..', '..b..')' end,
+			cpuop = function(a,b,c)
+				for i=0,3 do
+					c.s[i] = math.min(a.s[i], b.s[i])
+				end
+			end
+		}
+		local maxReduce = GLReduce{
 			fbo = self.fbo,
-			op = 'max',
-		}()
-print('reduce min', BMin, 'max', BMax)
+			pingpong = reducePP,
+			geometry = self.quadGeom,
+			vertexShader = self.quadGeomVertexShader,
+			gpuop = function(a,b) return 'max('..a..', '..b..')' end,
+			cpuop = function(a,b,c)
+				for i=0,3 do
+					c.s[i] = math.max(a.s[i], b.s[i])
+				end
+			end
+		}
+		local BMin = minReduce(BTex)
+		local BMax = maxReduce(BTex)
+--print('reduce B min', BMin, 'max', BMax)
+		local B2Min = minReduce(B2Tex)
+		local B2Max = maxReduce(B2Tex)
+--print('reduce B2 min', B2Min, 'max', B2Max)
+		local B3Min = minReduce(B3Tex)
+		local B3Max = maxReduce(B3Tex)
+--print('reduce B3 min', B3Min, 'max', B3Max)
 --]]
 
-		local statgens = table{
-			function(B, B2) return B.x end,
-			function(B, B2) return B.y end,
-			function(B, B2) return B.z end,
-			function(B, B2) return B2.x end,
-			function(B, B2) return B2.y end,
-			function(B, B2) return B2.z end,
-			function(B, B2) return B2.w end,
-			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) end,	-- not :length() since it's vec4...
-			function(B, B2) return math.sqrt(B.x*B.x + B.y*B.y) end,
-		}
-
-		for j=0,latdim-1 do
-			for i=0,londim-1 do
-				local e = i + londim * j
-				local B = BData[e]
-				local B2 = B2Data[e]
-				local Bmag = B:length()
-				self.BStat:accum(
-					statgens:mapi(function(f)
-						return f(B, B2)
-					end):unpack()
-				)
-			end
-		end
+		self.BStat.x.min = BMin.x			self.BStat.x.max = BMax.x
+		self.BStat.y.min = BMin.y			self.BStat.y.max = BMax.y
+		self.BStat.z.min = BMin.z			self.BStat.z.max = BMax.z
+		self.BStat.div.min = B2Min.x		self.BStat.div.max = B2Max.x
+		self.BStat.div2d.min = B2Min.y		self.BStat.div2d.max = B2Max.y
+		self.BStat.curlZ.min = B2Min.z		self.BStat.curlZ.max = B2Max.z
+		self.BStat.curlMag.min = B2Min.w	self.BStat.curlMag.max = B2Max.w
+		self.BStat.mag.min = B3Min.x		self.BStat.mag.max = B3Max.x
+		self.BStat.mag2d.min = B3Min.y		self.BStat.mag2d.max = B3Max.y
 
 		print('BStat')
-		print(self.BStat)
+		print(require 'ext.tolua'(self.BStat))
 --[[ stats should look like for wmm2020 dt=0
 x = {min = -16735.287109375, max = 41797.078125, avg = 17984.161021002, sqavg = 460231098.77605, stddev = 11696.198149258, count = 1036800},
 y = {min = -17571.607421875, max = 16772.9140625, avg = 0.00060528925769373, sqavg = 42031905.017686, stddev = 6483.2017566698, count = 1036800},
@@ -957,13 +1005,6 @@ mag = {min = 22232.017209054, max = 66990.328957622, avg = 45853.59896298, sqavg
 mag2d = {min = 29.5594549176, max = 41800.698442297, avg = 20242.527057979, sqavg = 502263003.79371, stddev = 9617.85330002, count = 1036800},
 --]]
 	end)
-
-	-- clamp in the min/max to 3 stddev
-	for i=1,#self.BStat do
-		local stat = self.BStat[i]
-		stat.min = math.max(stat.min, stat.avg - 3*stat.stddev)
-		stat.max = math.min(stat.max, stat.avg + 3*stat.stddev)
-	end
 --]=]
 
 	glreport'here'
