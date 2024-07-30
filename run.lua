@@ -670,9 +670,6 @@ function App:initGL(...)
 		},
 	}
 
-	self.unitProjMat = matrix_ffi({4,4}, 'float'):zeros():setOrtho(0, 1, 0, 1, -1, 1)
-	--self.unitProjMat = matrix_ffi({4,4}, 'float'):zeros():setOrtho(-1, 1, -1, 1, 1, -1)	-- identity matrix
-
 	-- lat/lon dim for surface statistics calculations
 	-- used for determining ranges, tho those ranges are invalide for any other times and altitudes
 	-- and in js-emulation it runs very slow
@@ -691,10 +688,9 @@ glreport'here'
 		code = [[
 layout(location=0) in vec2 vertex;
 out vec2 texcoordv;
-uniform mat4 mvProjMat;
 void main() {
 	texcoordv = vertex;
-	gl_Position = mvProjMat * vec4(vertex, 0., 1.);
+	gl_Position = vec4(vertex * 2. - 1., 0., 1.);
 }
 ]],
 	}
@@ -744,20 +740,6 @@ vec4 calcB2(vec3 plh) {
 		:unbind()
 glreport'here'
 
-	self.quadGeomVertexShader = GLProgram.VertexShader{
-		version = 'latest',
-		precision = 'best',
-		code = [[
-layout(location=0) in vec2 vertex;
-out vec2 texcoordv;
-uniform mat4 mvProjMat;
-void main() {
-	texcoordv = vertex;
-	gl_Position = mvProjMat * vec4(vertex, 0., 1.);
-}
-]],
-	}
-
 	local BData = ffi.new('vec4f_t[?]', londim * latdim)
 	local B2Data = ffi.new('vec4f_t[?]', londim * latdim)
 	timer('generating B field', function()
@@ -783,9 +765,9 @@ glreport'here'
 				shaders = {self.quadGeomVertexShader},
 				fragmentCode = [[
 uniform float dt;
-]]..self.calcBCode..template[[
+]]..self.calcBCode..[[
 
-#define M_PI <?=('%.49f'):format(math.pi)?>
+#define M_PI ]]..('%.49f'):format(math.pi)..[[
 
 in vec2 texcoordv;
 out vec4 fragColor;
@@ -809,7 +791,6 @@ void main() {
 			dest = BTex,
 			callback = function()
 				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-				calcBSceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
 				calcBSceneObj:draw()
 				gl.glReadPixels(0, 0, BTex.width, BTex.height, gl.GL_RGBA, gl.GL_FLOAT, BData)
 			end,
@@ -906,7 +887,6 @@ void main() {
 			dest = B2Tex,
 			callback = function()
 				gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-				calcB2SceneObj.uniforms.mvProjMat = self.unitProjMat.ptr
 				calcB2SceneObj:draw()
 				gl.glReadPixels(0, 0, B2Tex.width, B2Tex.height, gl.GL_RGBA, gl.GL_FLOAT, B2Data)
 			end,
@@ -922,6 +902,21 @@ glreport'here'
 	for i,stat in ipairs(self.BStat) do stat.onlyFinite = true end
 
 	timer('generating stats', function()
+--[[ TODO		
+		local GLReduce = require 'reduce'
+		local BMin = GLReduce{
+			tex = BTex,
+			fbo = self.fbo,
+			op = 'min',
+		}()
+		local BMax = GLReduce{
+			tex = BTex,
+			fbo = self.fbo,
+			op = 'max',
+		}()
+print('reduce min', BMin, 'max', BMax)
+--]]
+
 		local statgens = table{
 			function(B, B2) return B.x end,
 			function(B, B2) return B.y end,
@@ -961,43 +956,6 @@ curlMag = {min = 0.00051679083844647, max = 104.75435638428, avg = 0.16494477450
 mag = {min = 22232.017209054, max = 66990.328957622, avg = 45853.59896298, sqavg = 2234453543.2928, stddev = 11484.816299572, count = 1036800},
 mag2d = {min = 29.5594549176, max = 41800.698442297, avg = 20242.527057979, sqavg = 502263003.79371, stddev = 9617.85330002, count = 1036800},
 --]]
-
---[==[	-- plotting the bins
-		local Bin = require 'stat.bin'
-
-		local binCount = 100
-		local bins = table.mapi(self.BStat, function(stat,k)
-			return Bin(
-				math.max(stat.min, stat.avg - 3*stat.stddev),
-				math.min(stat.max, stat.avg + 3*stat.stddev),
-				binCount
-			)
-		end)
-		for j=0,latdim-1 do
-			for i=0,londim-1 do
-				local e = i + londim * j
-				local B = BData[e]
-				local B2 = B2Data[e]
-				local Bmag = B:length()
-				for i=1,#bins do
-					local stat = self.BStat[i]
-					local v = statgens[i](B, B2)
-					if v >= stat.avg - 3*stat.stddev and v <= stat.avg + 3*stat.stddev then
-						bins[i]:accum(v)
-					end
-				end
-			end
-		end
-		for i,bin in ipairs(bins) do
-			path'tmp.txt':write(bin:getTextData())
-			require 'gnuplot'{
-				title = self.BStat[i].name,
-				terminal = 'png size 1024,768',
-				output = self.BStat[i].name..'.png',
-				{using='1:2', datafile = 'tmp.txt'},
-			}
-		end
---]==]
 	end)
 
 	-- clamp in the min/max to 3 stddev
@@ -1666,7 +1624,6 @@ function App:integrateFieldLines()
 
 	self.integrateFieldLinesSceneObj.program:use()
 	self.integrateFieldLinesSceneObj.program:setUniforms{
-		mvProjMat = self.unitProjMat.ptr,
 		dt = guivars.fieldDT,
 		dparam = guivars.fieldLineIntStep,
 		texHeight = self.fieldLineVtxsTex.height,	-- #startCoords
