@@ -1,6 +1,6 @@
 #!/usr/bin/env luajit
 local cmdline = require 'ext.cmdline'(...)
-local assertindex = require 'ext.assert'.index
+local assert = require 'ext.assert'
 local math = require 'ext.math'	-- isfinite
 local timer = require 'ext.timer'
 local gl = require 'gl.setup'(cmdline.gl or 'OpenGL')
@@ -410,7 +410,7 @@ local chartIndexForName = chartNames:mapi(function(v,i) return i,v end)
 
 local charts = table()
 for i,name in ipairs(chartNames) do
-	local chart = assertindex(allCharts, name)
+	local chart = assert.index(allCharts, name)
 	charts[i] = chart
 	charts[name] = chart
 end

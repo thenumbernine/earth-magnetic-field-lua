@@ -1,5 +1,5 @@
 local ffi = require 'ffi'
-local assertindex = require 'ext.assert'.index
+local assert = require 'ext.assert'
 local class = require 'ext.class'
 local vector = require 'ffi.cpp.vector-lua'
 local template = require 'template'
@@ -55,8 +55,8 @@ void main() {
 		fbo = args.fbo,
 	}
 
-	self.gpuop = assertindex(args, 'gpuop')
-	self.cpuop = assertindex(args, 'cpuop')
+	self.gpuop = assert.index(args, 'gpuop')
+	self.cpuop = assert.index(args, 'cpuop')
 	self.program = GLProgram{
 		version = 'latest',
 		precision = 'best',
@@ -98,14 +98,14 @@ void main() {
 	}
 
 	local tex = self.tex or self.pingpong:cur()
-	local ctype = assertindex(require 'gl.types'.ctypeForGLType, tex.type)
-	local channels = assertindex(require 'gl.tex'.channelsForFormat, tex.format)	-- TODO move this table in gl.types?
+	local ctype = assert.index(require 'gl.types'.ctypeForGLType, tex.type)
+	local channels = assert.index(require 'gl.tex'.channelsForFormat, tex.format)	-- TODO move this table in gl.types?
 	if channels == 1 then
 	elseif channels == 2
 	or channels == 3
 	or channels == 4
 	then
-		local suffix = assertindex(require 'vec-ffi.suffix', ctype)
+		local suffix = assert.index(require 'vec-ffi.suffix', ctype)
 		ctype = require('vec-ffi.vec'..channels..suffix).name
 	else
 		error("idk what vector type to use for this many channels")
@@ -120,7 +120,7 @@ args:
 	fbo = fbo to use (optional)
 --]]
 function GLReduce:makePingPong(args)
-	local tex = assertindex(args, 'tex')
+	local tex = assert.index(args, 'tex')
 	return GLPingPong{
 		fbo = args.fbo,
 		width = tex.width,
