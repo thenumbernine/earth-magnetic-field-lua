@@ -2,6 +2,10 @@
 
 ## Visualization of the WMM 2020 data.
 
+![alt text](pics/pic4.png)
+
+![alt text](pics/pic3.png)
+![alt text](pics/pic2.png)
 ![alt text](pics/pic1.png)
 
 If you need more data:
