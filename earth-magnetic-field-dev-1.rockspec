@@ -4,8 +4,8 @@ source = {
 	url = "git+https://github.com/thenumbernine/earth-magnetic-field-lua.git"
 }
 description = {
-	summary = "Visualization of the WMM 2020 data.",
-	detailed = "Visualization of the WMM 2020 data.",
+	summary = "Visualization of the WMM 2025 data.",
+	detailed = "Visualization of the WMM 2025 data.",
 	homepage = "https://github.com/thenumbernine/earth-magnetic-field-lua",
 	license = "MIT"
 }
