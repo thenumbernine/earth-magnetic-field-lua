@@ -40,22 +40,22 @@ files = {
 -- binary libs needed for luajit
 -- TODO how about consulting ffi/load.lua for where these are
 luajitLibs = {
-	win = {
+	win = {	-- appends .dll
 		'png',	-- TODO which dir is it pulling png from? do i need z or zlib? doen't matter, no pngs in this so far
 		--'zlib',	-- or is it static linked into png already?
 		'SDL2',
-		'cimgui',
+		'cimgui_sdl',
 	},
-	linux = {
+	linux = {	-- prepend lib and appends .so
 		'png',			-- /usr/lib/x86_64-linux-gnu/libpng16.so.16.39.0
 		--'zlib',
 		'SDL2',			-- /usr/lib/x86_64-linux-gnu/libSDL2-2.0.so.0.2600.3
-		'cimgui',
+		'cimgui_sdl',
 	},
-	osx = {
+	osx = {	-- prepend lib and appends .dylib
 		'png',
 		--'zlib',
 		'SDL2',
-		'cimgui',
+		'cimgui_sdl',
 	},
 }
