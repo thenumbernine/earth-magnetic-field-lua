@@ -1,6 +1,6 @@
 [![Donate via Stripe](https://img.shields.io/badge/Donate-Stripe-green.svg)](https://buy.stripe.com/00gbJZ0OdcNs9zi288)<br>
 
-## Visualization of the WMM 2020 data.
+## Visualization of the WMM 2025 data.
 
 ![alt text](pics/pic4.png)
 
