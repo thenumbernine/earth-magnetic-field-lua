@@ -41,7 +41,7 @@ wgs84.re = 6371.2 -- Earth's radius
 local HeightAboveEllipsoid = 0		-- compute at z=0 for now
 -- TODO add support for dg/dh
 
-local wmmfn = cmdline.cof or 'wmm2025/wmm.cof'
+local wmmfn = cmdline.cof or 'wmm2025-cof.txt'	-- 'wmm2020-cof.txt'
 
 -- load wmm
 local lines = string.split(string.trim((assert(path(wmmfn):read()))), '\n')
