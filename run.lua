@@ -354,7 +354,7 @@ Bz = -d/dheight points inwards
 
 local earthtex
 
-local App = require 'imguiapp.withorbit'()
+local App = require 'imgui.appwithorbit'()
 App.title = 'EM field'
 
 
