@@ -1,38 +1,32 @@
-name = 'earth-magnetic-field'
+name = "earth-magnetic-field"
 luaArgs = {'run.lua'}
 
 files = {
-	-- cwd files/dirs go here
-	['.'] = {
-		'README.md',
-		'run.lua',
-		'reduce.lua',
-		'calc_b.shader',
-		'earth.png',
-		'wmm2020/wmm.cof',
-		'wmm2025/wmm.cof',
-	},
-	-- other paths go here
-	['..'] = table{
-		'template',
-		'ext',
-		'lfs_ffi',	-- needed by ext
-		'ffi',
-		'image',
-		'gl',
-		'sdl',
-		'glapp',
-		'struct',
-		'vec-ffi',
-		'matrix',
-		'imgui',
-		'geographic-charts',
-		'complex',	-- needed by symmath
-		'bignumber',	-- needed by symmath
-		'symmath',
-		'modules',
-		'cl',	-- only for clnumber
-	},
+	["README.md"] = "earth-magnetic-field/README.md",
+	["calc_b.shader"] = "earth-magnetic-field/calc_b.shader",
+	["distinfo"] = "earth-magnetic-field/distinfo",
+	["earth-magnetic-field-dev-1.rockspec"] = "earth-magnetic-field/earth-magnetic-field-dev-1.rockspec",
+	["earth.png"] = "earth-magnetic-field/earth.png",
+	["pics/pic1.png"] = "earth-magnetic-field/pics/pic1.png",
+	["pics/pic2.png"] = "earth-magnetic-field/pics/pic2.png",
+	["pics/pic3.png"] = "earth-magnetic-field/pics/pic3.png",
+	["pics/pic4.png"] = "earth-magnetic-field/pics/pic4.png",
+	["reduce.lua"] = "earth-magnetic-field/reduce.lua",
+	["run.lua"] = "earth-magnetic-field/run.lua",
+	["wmm2020-cof.txt"] = "earth-magnetic-field/wmm2020-cof.txt",
+	["wmm2025-cof.txt"] = "earth-magnetic-field/wmm2025-cof.txt",
+}
+deps = {
+	"cl",
+	"ext",
+	"ffi",
+	"geographic-charts",
+	"gl",
+	"image",
+	"imgui",
+	"matrix",
+	"template",
+	"vec-ffi",
 }
 
 -- binary libs needed for luajit
