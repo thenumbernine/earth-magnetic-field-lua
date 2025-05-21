@@ -17,7 +17,6 @@ files = {
 	["wmm2025-cof.txt"] = "earth-magnetic-field/wmm2025-cof.txt",
 }
 deps = {
-	"cl",
 	"ext",
 	"ffi",
 	"geographic-charts",

@@ -25,7 +25,6 @@ local GLArrayBuffer = require 'gl.arraybuffer'
 local GLProgram = require 'gl.program'
 local GLGeometry = require 'gl.geometry'
 local GLSceneObject = require 'gl.sceneobject'
-local clnumber = require 'cl.obj.number'
 
 
 -- Sets WGS-84 parameters
@@ -1179,7 +1178,6 @@ void main() {
 }
 ]],
 			{
-				clnumber = clnumber,
 				chartCNames = chartCNames,
 			}),
 			fragmentCode = [[
