@@ -1,9 +1,9 @@
 <?
 local nMax = #wmm
-local clnumber = require 'cl.obj.number'
+local glnumber = require 'gl.number'
 local function int(x) return x < 0 and math.ceil(x) or math.floor(x) end
 for k,v in pairs(wgs84) do
-?>#define wgs84_<?=k?>	<?=clnumber(v)?>
+?>#define wgs84_<?=k?>	<?=glnumber(v)?>
 <?
 end
 ?>
@@ -113,7 +113,7 @@ vec3 calcB(vec3 plh) {
 <?
 				else
 					local k = (((n - 1) * (n - 1)) - (m * m)) / ((2 * n - 1) * (2 * n - 3))
-?>	P[<?=int(index)?>] = vec2(cisPhiSph.y * P[<?=int(index2)?>].x - <?=clnumber(k)?> * P[<?=int(index1)?>].x, cisPhiSph.y * P[<?=int(index2)?>].y - cisPhiSph.x * P[<?=int(index2)?>].x - <?=clnumber(k)?> * P[<?=int(index1)?>].y);
+?>	P[<?=int(index)?>] = vec2(cisPhiSph.y * P[<?=int(index2)?>].x - <?=glnumber(k)?> * P[<?=int(index1)?>].x, cisPhiSph.y * P[<?=int(index2)?>].y - cisPhiSph.x * P[<?=int(index2)?>].x - <?=glnumber(k)?> * P[<?=int(index1)?>].y);
 <?
 				end
 			end
@@ -170,29 +170,29 @@ vec3 calcB(vec3 plh) {
 				?>0.<?
 			else
 				?>P[<?=int(index)?>].x<? end ?>, -P[<?=int(index)?>].x) * (mat2x3(vec3(<?=
-						clnumber(wmm[n][m].g * -schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].g * -schmidtQuasiNorm[index])
 					?> - dt * <?=
-						clnumber(wmm[n][m].dg_dt * -schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].dg_dt * -schmidtQuasiNorm[index])
 					?>, <? if m == 0 then ?>0.<? else ?><?=
-						clnumber(-wmm[n][m].h * m * schmidtQuasiNorm[index])
+						glnumber(-wmm[n][m].h * m * schmidtQuasiNorm[index])
 					?> - dt * <?=
-						clnumber(wmm[n][m].dh_dt * m * schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].dh_dt * m * schmidtQuasiNorm[index])
 					?><? end ?>, <?=
-						clnumber(wmm[n][m].g * (n + 1) * schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].g * (n + 1) * schmidtQuasiNorm[index])
 					?> - dt * <?=
-						clnumber(wmm[n][m].dg_dt * (n + 1) * schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].dg_dt * (n + 1) * schmidtQuasiNorm[index])
 					?>), vec3(<?=
-						clnumber(wmm[n][m].h * -schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].h * -schmidtQuasiNorm[index])
 					?> - dt * <?=
-						clnumber(wmm[n][m].dh_dt * -schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].dh_dt * -schmidtQuasiNorm[index])
 					?>, <? if m == 0 then ?>0.<? else ?><?=
-						clnumber(wmm[n][m].g * m * schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].g * m * schmidtQuasiNorm[index])
 					?> - dt * <?=
-						clnumber(wmm[n][m].dg_dt * m * schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].dg_dt * m * schmidtQuasiNorm[index])
 					?><? end ?>, <?=
-						clnumber(wmm[n][m].h * (n + 1) * schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].h * (n + 1) * schmidtQuasiNorm[index])
 					?> - dt * <?=
-						clnumber(wmm[n][m].dh_dt * (n + 1) * schmidtQuasiNorm[index])
+						glnumber(wmm[n][m].dh_dt * (n + 1) * schmidtQuasiNorm[index])
 					?>)) * cisLambdaToTheM[<?=int(m)?>])
 <?		end
 	end
@@ -234,7 +234,7 @@ vec3 calcB(vec3 plh) {
 ?>		PS[<?=int(n)?>] = PS[<?=int(n-1)?>];
 <? 			else
 				local k = (((n - 1) * (n - 1)) - 1) / ((2 * n - 1) * (2 * n - 3))
-?>		PS[<?=int(n)?>] = cisPhiSph.y * PS[<?=int(n-1)?>] - <?=clnumber(k)?> * PS[<?=int(n-2)?>];
+?>		PS[<?=int(n)?>] = cisPhiSph.y * PS[<?=int(n-1)?>] - <?=glnumber(k)?> * PS[<?=int(n-2)?>];
 <?
 			end
 
@@ -244,9 +244,9 @@ vec3 calcB(vec3 plh) {
 			-- Equation 11 in the WMM Technical report. Derivative with respect to longitude, divided by radius.
 
 ?>		B.y += earthRadOverRToTheN * dot(cisLambda, vec2(<?=
-			clnumber(-wmm[n][m].h * schmidtQuasiNorm3)
+			glnumber(-wmm[n][m].h * schmidtQuasiNorm3)
 		?>, <?=
-			clnumber(wmm[n][m].g * schmidtQuasiNorm3)
+			glnumber(wmm[n][m].g * schmidtQuasiNorm3)
 		?>)) * PS[<?=int(n)?>];
 <?
 		end
