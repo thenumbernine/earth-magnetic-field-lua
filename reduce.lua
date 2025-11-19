@@ -98,7 +98,7 @@ void main() {
 	}
 
 	local tex = self.tex or self.pingpong:cur()
-	local ctype = assert.index(require 'gl.types'.ctypeForGLType, tex.type)
+	local ctype = tostring(ffi.typeof((assert.index(require 'gl.types'.ctypeForGLType, tex.type)))):match'^ctype<(.*)>$'
 	local channels = assert.index(require 'gl.tex'.channelsForFormat, tex.format)	-- TODO move this table in gl.types?
 	if channels == 1 then
 	elseif channels == 2
