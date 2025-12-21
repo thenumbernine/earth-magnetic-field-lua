@@ -20,7 +20,7 @@ local path = require 'ext.path'
 local glreport = require 'gl.report'
 local ig = require 'imgui'
 local GLTex2D = require 'gl.tex2d'
-local GLFBO = require 'gl.fbo'
+local GLFramebuffer = require 'gl.framebuffer'
 local GLArrayBuffer = require 'gl.arraybuffer'
 local GLProgram = require 'gl.program'
 local GLGeometry = require 'gl.geometry'
@@ -674,7 +674,7 @@ function App:initGL(...)
 	local latdim = 64	-- 720	 -- dimension in 2D y dir / spherical theta / globe phi dir
 
 	-- fbo is used for stats calcs and for field line integration
-	self.fbo = GLFBO()
+	self.fbo = GLFramebuffer()
 		:unbind()
 glreport'here'
 
@@ -748,7 +748,7 @@ vec4 calcB2(vec3 plh) {
 	end
 
 	-- fbo is used for stats calcs and for field line integration
-	self.fbo = GLFBO()
+	self.fbo = GLFramebuffer()
 		:unbind()
 glreport'here'
 
