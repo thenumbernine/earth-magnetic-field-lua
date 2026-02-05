@@ -1034,7 +1034,7 @@ void main() {
 			count = 1,
 			size = 3 * ffi.sizeof'float',
 			type = gl.GL_FLOAT,
-			data = ffi.new('vec3f_t[?]', 1),
+			data = ffi.new('vec3f[?]', 1),
 		},
 		geometry = {
 			mode = gl.GL_POINTS,
@@ -1065,7 +1065,7 @@ void main() {
 			count = 2,
 			size = 2 * 3 * ffi.sizeof'float',
 			type = gl.GL_FLOAT,
-			data = ffi.new('vec3f_t[?]', 2),
+			data = ffi.new('vec3f[?]', 2),
 		},
 		geometry = {
 			mode = gl.GL_LINES,
@@ -1392,7 +1392,7 @@ function App:updateArrowTex()
 	-- technically you could even do it on the GPU as a GPU pass ...
 	-- just 1) unravel the texcoord to 1D index
 	-- then 2) ... well the inverse map of the sum of ceil(londim * cos(phi)) is a bit tricky ...
-	local arrowCoords = vector'vec2f_t'
+	local arrowCoords = vector'vec2f'
 	local londim = guivars.arrowLonDim
 	local latdim = guivars.arrowLatDim
 	for j=0,latdim-1 do
@@ -1448,7 +1448,7 @@ how to build the field lines on the GPU ...
 3) copy the fbo tex to an array buffer, and use it as a bunch of line strip vertexes
 --]]
 
-	self.startCoords = vector'vec4f_t'
+	self.startCoords = vector'vec4f'
 	-- try to draw magnetic field lines ...
 	for j=0,latdim-1 do
 		local v = (j + .5) / latdim
