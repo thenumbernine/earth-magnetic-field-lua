@@ -16,7 +16,6 @@ local table = require 'ext.table'
 local range = require 'ext.range'
 local string = require 'ext.string'
 local path = require 'ext.path'
-local glreport = require 'gl.report'
 local ig = require 'imgui'
 local GLTex2D = require 'gl.tex2d'
 local GLFramebuffer = require 'gl.framebuffer'
@@ -675,7 +674,6 @@ function App:initGL(...)
 	-- fbo is used for stats calcs and for field line integration
 	self.fbo = GLFramebuffer()
 		:unbind()
-glreport'here'
 
 	self.quadGeomVertexShader = GLProgram.VertexShader{
 		version = 'latest',
@@ -749,7 +747,6 @@ vec4 calcB2(vec3 plh) {
 	-- fbo is used for stats calcs and for field line integration
 	self.fbo = GLFramebuffer()
 		:unbind()
-glreport'here'
 
 	local piDef = '#define M_PI '..('%.49f'):format(math.pi)
 
@@ -782,7 +779,6 @@ void main() {
 		geometry = self.quadGeom,
 	}
 
-glreport'here'
 
 	-- module depends M_PI, uniform vec2 latLonDim
 	self.calcB2Code = [[
@@ -1584,7 +1580,6 @@ function App:integrateFieldLines()
 	self.fbo:unbind()
 
 	gl.glReadBuffer(gl.GL_BACK)
-glreport'here'
 end
 
 -- this goes slow right now
@@ -1646,7 +1641,6 @@ mag2d = {min = 29.5594549176, max = 41800.698442297, avg = 20242.527057979, sqav
 --]]
 	end)
 --]=]
-glreport'here'
 end
 
 --[=[
@@ -1816,8 +1810,6 @@ function App:update(...)
 
 	gl.glDisable(gl.GL_BLEND)
 	gl.glDisable(gl.GL_DEPTH_TEST)
-
-	glreport'here'
 
 	--render gui
 	App.super.update(self, ...)
