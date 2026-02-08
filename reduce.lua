@@ -1,7 +1,7 @@
 local ffi = require 'ffi'
 local assert = require 'ext.assert'
 local class = require 'ext.class'
-local vector = require 'ffi.cpp.vector-lua'
+local vector = require 'stl.vector-lua'
 local template = require 'template'
 local gl = require 'gl'
 local GLPingPong = require 'gl.pingpong'

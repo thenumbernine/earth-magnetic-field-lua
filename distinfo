@@ -26,6 +26,7 @@ deps = {
 	"gl",
 	"image",
 	"imgui",
+	"stl",
 	"template",
 	"vec-ffi",
 }
