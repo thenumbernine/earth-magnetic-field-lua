@@ -8,8 +8,14 @@ I did it lazy.
 - you could speed it up by using cached neighbors
 - you could speed it up by multithreading it
 - you could speed it up by writing it as a compute-gpu kernel (tho the nvidia linker is taking 1minute to link a glsl program made for nMax=#wmm=12. ....)
+
+but then I did all those things to try to fix the B gradient error at the poles
+TODO FIX THE B GRADIENT ERROR AT THE POLES
 --]]
+local ffi = require 'ffi'
 local assert = require 'ext.assert'
+local math = require 'ext.math'
+local path = require 'ext.path'
 local cmdline = require 'ext.cmdline'(...)
 local WMM = require 'earth-magnetic-field.wmm'
 
@@ -28,43 +34,56 @@ local dphi = math.pi / londim
 local dlambda = 2 * math.pi / latdim
 local dheight = 1000
 
-local BImg = Image(londim, latdim, 4, 'float')	-- Bx, By, Bz, 0
+local BImg
+local Bpath = path'B.fits'
+if Bpath:exists() then
+	BImg = Image'B.fits'
+	assert.eq(londim, BImg.width)
+	assert.eq(latdim, BImg.height)
+	assert.eq(4, BImg.channels)
+	assert.eq(ffi.typeof'float', BImg.format)
+else
+	-- regenerate BImg
+	BImg = Image(londim, latdim, 4, 'float')	-- Bx, By, Bz, 0
+
+	print'Building B'
+	local lastTime = os.time()
+	local Bptr = BImg.buffer+0
+	for j=0,latdim-1 do
+		local v = (j + .5) / latdim
+		local lat = (v * 2 - 1) * 90
+		local phi = math.rad(lat)
+		local cos_phi = math.cos(phi)
+		for i=0,londim-1 do
+			local u = (i + .5) / londim
+			local lon = (u * 2 - 1) * 180
+			local lambda = math.rad(lon)
+
+			local thisTime = os.time()
+			if lastTime ~= thisTime then
+				lastTime = thisTime
+				print(
+					(100 * (i + londim * j) / (latdim * londim))
+					..'%% complete'
+				)
+			end
+
+			-- calcB
+
+			local Bx, By, Bz = W:calcB(phi, lambda, 0)
+
+			Bptr[0] = Bx	Bptr=Bptr+1
+			Bptr[0] = By	Bptr=Bptr+1
+			Bptr[0] = Bz	Bptr=Bptr+1
+			Bptr[0] = 0		Bptr=Bptr+1
+		end
+	end
+	assert.eq(Bptr, BImg.buffer + BImg.channels * BImg.width * BImg.height)
+end
+
+print'Building B2 and B3'
 local B2Img = Image(londim, latdim, 4, 'float')	-- div B, div2D B, curl B, |curl B|
 local B3Img = Image(londim, latdim, 4, 'float')	-- |B| |B|2d, 0, 0
-
-local lastTime = os.time()
-local Bptr = BImg.buffer+0
-for j=0,latdim-1 do
-	local v = (j + .5) / latdim
-	local lat = (v * 2 - 1) * 90
-	local phi = math.rad(lat)
-	local cos_phi = math.cos(phi)
-	for i=0,londim-1 do
-		local u = (i + .5) / londim
-		local lon = (u * 2 - 1) * 180
-		local lambda = math.rad(lon)
-
-		local thisTime = os.time()
-		if lastTime ~= thisTime then
-			lastTime = thisTime
-			print(
-				(100 * (i + londim * j) / (latdim * londim))
-				..'%% complete'
-			)
-		end
-
-		-- calcB
-
-		local Bx, By, Bz = W:calcB(phi, lambda, 0)
-
-		Bptr[0] = Bx	Bptr=Bptr+1
-		Bptr[0] = By	Bptr=Bptr+1
-		Bptr[0] = Bz	Bptr=Bptr+1
-		Bptr[0] = 0		Bptr=Bptr+1
-	end
-end
-assert.eq(Bptr, BImg.buffer + BImg.channels * BImg.width * BImg.height)
-
 
 local lastTime = os.time()
 local Bptr = BImg.buffer+0
@@ -101,20 +120,68 @@ for j=0,latdim-1 do
 		local Bx_lambdaL, By_lambdaL, Bz_lambdaL = W:calcB(phi, lambda - dlambda, 0)
 		--]]
 		--[[ use cached BImg copy
+		local flip
+		local iR = i
 		local jR = j + 1
-		local Bx_phiR, By_phiR, Bz_phiR
-		if jR == latdim then
+		if jR > latdim-1 then
 			-- across the pole?
+			-- lat -> lat + 180 degrees
+			-- lon -> -lon
 			-- flip everything
-			error"I'm lazy"
-			Bx_phiR = B.buffer[0 + B.channels * (i + londim * jR)]
-			By_phiR = B.buffer[1 + B.channels * (i + londim * jR)]
-			Bz_phiR = B.buffer[2 + B.channels * (i + londim * jR)]
-		else
-			Bx_phiR = B.buffer[0 + B.channels * (i + londim * jR)]
-			By_phiR = B.buffer[1 + B.channels * (i + londim * jR)]
-			Bz_phiR = B.buffer[2 + B.channels * (i + londim * jR)]
+			iR = (iR + bit.rshift(londim, 1)) % londim
+			jR = latdim-1 - (jR - (latdim-1))
+			flip = true
 		end
+assert.le(0, iR) assert.lt(iR, londim)
+assert.le(0, jR) assert.lt(jR, latdim)
+		local Bx_phiR = BImg.buffer[0 + BImg.channels * (iR + londim * jR)]
+		local By_phiR = BImg.buffer[1 + BImg.channels * (iR + londim * jR)]
+		local Bz_phiR = BImg.buffer[2 + BImg.channels * (iR + londim * jR)]
+		if flip then -- I flip these when I go over the pole ... right?
+			Bx_phiR = -Bx_phiR
+			By_phiR = -By_phiR
+		end
+
+		local iL = i
+		local jL = j - 1
+		local flip
+		if jL < 0 then
+			-- same
+			iL = (iL + bit.rshift(londim, 1)) % londim
+			jL = -jL
+			flip = true
+		end
+assert.le(0, iL) assert.lt(iL, londim)
+assert.le(0, jL) assert.lt(jL, latdim)
+		local Bx_phiL = BImg.buffer[0 + BImg.channels * (iL + londim * jL)]
+		local By_phiL = BImg.buffer[1 + BImg.channels * (iL + londim * jL)]
+		local Bz_phiL = BImg.buffer[2 + BImg.channels * (iL + londim * jL)]
+		if flip then -- I flip these when I go over the pole ... right?
+			Bx_phiL = -Bx_phiL
+			By_phiL = -By_phiL
+		end
+
+		local jR = j
+		local iR = i + 1
+		if iR > londim-1 then
+			iR = iR % londim
+		end
+assert.le(0, iR) assert.lt(iR, londim)
+assert.le(0, jR) assert.lt(jR, latdim)
+		local Bx_lambdaR = BImg.buffer[0 + BImg.channels * (iR + londim * jR)]
+		local By_lambdaR = BImg.buffer[1 + BImg.channels * (iR + londim * jR)]
+		local Bz_lambdaR = BImg.buffer[2 + BImg.channels * (iR + londim * jR)]
+
+		local jL = j
+		local iL = i - 1
+		if iL < 0 then
+			iL = iL % londim
+		end
+assert.le(0, iL) assert.lt(iL, londim)
+assert.le(0, jL) assert.lt(jL, latdim)
+		local Bx_lambdaL = BImg.buffer[0 + BImg.channels * (iL + londim * jL)]
+		local By_lambdaL = BImg.buffer[1 + BImg.channels * (iL + londim * jL)]
+		local Bz_lambdaL = BImg.buffer[2 + BImg.channels * (iL + londim * jL)]
 		--]]
 
 		-- there is no separate altitude cache
