@@ -209,7 +209,7 @@ vec3 calcB(vec3 plh) {
 		// MAG_CheckGeographicPoles.
 		// begin MAG_SummationSpecial
 
-		//float PS[numTerms];
+		//float PS[nMax+1];
 		float PS_0 = 1.;
 
 		B.y = 0.;

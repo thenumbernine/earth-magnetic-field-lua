@@ -477,7 +477,7 @@ local gradients = {
 					local s = (u+.5)/n
 					-- TODO this but in shader so we can dynamically change it
 					local alpha = bit.band(u, 15) == 0 and 255 or 0
-					return 255*(1-s),0,255*s,alpha
+					return 255*s,255*s,255*s,alpha
 				end
 			)
 			return GLTex2D{
@@ -1637,13 +1637,13 @@ function App:recalcBStats()
 -- [[
 		self.BMin = self.minReduce(self.BTex)
 		self.BMax = self.maxReduce(self.BTex)
---print('reduce B min', BMin, 'max', BMax)
+print('reduce B min', self.BMin, 'max', self.BMax)
 		self.B2Min = self.minReduce(self.B2Tex)
 		self.B2Max = self.maxReduce(self.B2Tex)
---print('reduce B2 min', B2Min, 'max', B2Max)
+print('reduce B2 min', self.B2Min, 'max', self.B2Max)
 		self.B3Min = self.minReduce(self.B3Tex)
 		self.B3Max = self.maxReduce(self.B3Tex)
---print('reduce B3 min', B3Min, 'max', B3Max)
+print('reduce B3 min', self.B3Min, 'max', self.B3Max)
 --]]
 
 --[[ stats should look like for wmm2020 dt=0
