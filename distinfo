@@ -6,6 +6,7 @@ name = "earth-magnetic-field"
 luaArgs = {'run.lua'}
 files = {
 	"README.md",
+	"build-btex.lua",
 	"calc_b.shader",
 	"distinfo",
 	"earth-magnetic-field-dev-1.rockspec",
@@ -16,6 +17,7 @@ files = {
 	"pics/pic4.png",
 	"reduce.lua",
 	"run.lua",
+	"wmm.lua",
 	"wmm2020-cof.txt",
 	"wmm2025-cof.txt",
 }
