@@ -357,7 +357,6 @@ App.title = 'EM field'
 
 
 local guivars = {
-	geomIndex = 1,
 	overlayIndex = 2,
 	gradientIndex = 1,
 
@@ -384,6 +383,8 @@ local guivars = {
 	fieldLineEvenDistribute = false,
 	fieldLineIter = 400,
 	fieldLineIntStep = 1e-2,
+
+	normalizeWeights = true,
 }
 
 
@@ -400,6 +401,7 @@ local allCharts = require 'geographic-charts'	-- TODO switch to this
 
 -- which charts we want to allow ...
 local chartNames = table{
+	'Mercator',
 	'Equirectangular',
 	'Azimuthal equidistant',
 	'Mollweide',
@@ -415,14 +417,21 @@ for i,name in ipairs(chartNames) do
 	charts[name] = chart
 end
 
+charts.Mercator.Miller = .8			-- set chart_Mercator.Miller=4/5 to get Miller projection
 charts['Azimuthal equidistant'].R = .5 * math.pi
 --allCharts.WGS84_a = wgs84.a
+
 for _,name in ipairs(chartNames) do
 	local c = charts[name]
 	if c.build then c:build() end
 end
 
 local chartCNames = charts:mapi(function(chart) return chart:getCName() end)
+local chartWeightNames = chartCNames:mapi(function(chartCName) return 'weight_'..chartCName end)	-- did I put this somewhere else?
+
+for i,chartWeightName in ipairs(chartWeightNames) do
+	guivars[chartWeightName] = i==1 and 1 or 0
+end
 
 -- TODO this but only for the charts we're using ...
 --require 'geographic-charts.buildall'
@@ -562,72 +571,69 @@ local overlays = {
 	},
 }
 
-for chartIndex,c in ipairs(charts) do
-	function c:draw(app, shader, gradTex)
-		local height = 0
-		local jres = 360
-		local ires = 180
-		if not self.sceneobj then
-			local vertexes = table()
-			for i=0,ires do
-				local u = i/ires
-				local phi = math.rad((u * 2 - 1) * 90)
-				for j=0,jres do
-					local v = j/jres
-					local lambda = math.rad((v * 2 - 1) * 180)
-					vertexes:append{v, u}	-- lon, lat = u, v in texcoord space
+function App:drawChart(shader, gradTex)
+	local height = 0
+	local jres = 360
+	local ires = 180
+	if not self.chartSceneObj then
+		local vertexes = table()
+		for i=0,ires do
+			local u = i/ires
+			local phi = math.rad((u * 2 - 1) * 90)
+			for j=0,jres do
+				local v = j/jres
+				local lambda = math.rad((v * 2 - 1) * 180)
+				vertexes:append{v, u}	-- lon, lat = u, v in texcoord space
+			end
+		end
+		self.vertexBuf = GLArrayBuffer{
+			data = vertexes,
+			dim = 2,
+		}:unbind()
+
+		local geometries = table()
+		for ibase=0,ires-1 do
+			local indexes = table()
+			for j=0,jres do
+				for iofs=1,0,-1 do
+					local i = ibase + iofs
+					indexes:insert(j + (jres + 1) * i)
 				end
 			end
-			self.vertexBuf = GLArrayBuffer{
-				data = vertexes,
-				dim = 2,
-			}:unbind()
-
-			local geometries = table()
-			for ibase=0,ires-1 do
-				local indexes = table()
-				for j=0,jres do
-					for iofs=1,0,-1 do
-						local i = ibase + iofs
-						indexes:insert(j + (jres + 1) * i)
-					end
-				end
-				geometries:insert(GLGeometry{
-					mode = gl.GL_TRIANGLE_STRIP,
-					indexes = {
-						data = indexes,
-					},
-					vertexes = self.vertexBuf,
-				})
-			end
-
-			self.sceneobj = GLSceneObject{
-				program = shader,
+			geometries:insert(GLGeometry{
+				mode = gl.GL_TRIANGLE_STRIP,
+				indexes = {
+					data = indexes,
+				},
 				vertexes = self.vertexBuf,
-				geometries = geometries,
-				texs = {earthtex, gradTex},
-			}
+			})
 		end
 
-		self.sceneobj.program = shader
-		self.sceneobj.texs[2] = gradTex
-		self.sceneobj.uniforms.mvProjMat = app.view.mvProjMat.ptr
-		self.sceneobj.uniforms.dt = guivars.fieldDT
-		self.sceneobj.uniforms.alpha = guivars.drawAlpha
-		self.sceneobj.uniforms.gradScale = guivars.gradScale
-		self.sceneobj.uniforms.BMin = app.BMin.s
-		self.sceneobj.uniforms.BMax = app.BMax.s
-		self.sceneobj.uniforms.B2Min = app.B2Min.s
-		self.sceneobj.uniforms.B2Max = app.B2Max.s
-		self.sceneobj.uniforms.B3Min = app.B3Min.s
-		self.sceneobj.uniforms.B3Max = app.B3Max.s
-		self.sceneobj.uniforms['weight_Equirectangular'] = chartIndex == 1 and 1 or 0
-		self.sceneobj.uniforms['weight_Azimuthal_equidistant'] = chartIndex == 2 and 1 or 0
-		self.sceneobj.uniforms['weight_Mollweide'] = chartIndex == 3 and 1 or 0
-		self.sceneobj.uniforms['weight_WGS84'] = chartIndex == 4 and 1 or 0
-		self.sceneobj.uniforms.chartIs3D = self.is3D or false
-		self.sceneobj:draw()
+		self.chartSceneObj = GLSceneObject{
+			program = shader,
+			vertexes = self.vertexBuf,
+			geometries = geometries,
+			texs = {earthtex, gradTex},
+		}
 	end
+
+	self.chartSceneObj.program = shader
+	self.chartSceneObj.texs[2] = gradTex
+	self.chartSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+	self.chartSceneObj.uniforms.dt = guivars.fieldDT
+	self.chartSceneObj.uniforms.alpha = guivars.drawAlpha
+	self.chartSceneObj.uniforms.gradScale = guivars.gradScale
+	self.chartSceneObj.uniforms.BMin = self.BMin.s
+	self.chartSceneObj.uniforms.BMax = self.BMax.s
+	self.chartSceneObj.uniforms.B2Min = self.B2Min.s
+	self.chartSceneObj.uniforms.B2Max = self.B2Max.s
+	self.chartSceneObj.uniforms.B3Min = self.B3Min.s
+	self.chartSceneObj.uniforms.B3Max = self.B3Max.s
+	for i,chartWeightName in ipairs(chartWeightNames) do
+		self.chartSceneObj.uniforms[chartWeightName] = guivars[chartWeightName]
+	end
+	self.chartSceneObj.uniforms.chartIs3D = false --self.is3D or false
+	self.chartSceneObj:draw()
 end
 
 
@@ -998,8 +1004,8 @@ void main() {
 				gradTex = 1,
 				alpha = 1,
 				dt = 0,
-			}, chartCNames:mapi(function(name,j)
-				return j==i and 1 or 0, 'weight_'..name
+			}, chartWeightNames:mapi(function(chartWeightName,j)
+				return guivars[chartWeightName], chartWeightName
 			end)):setmetatable(nil),
 		}:useNone()
 	end
@@ -1134,9 +1140,9 @@ void main() {
 	//from meters to normalized coordinates
 	pos /= WGS84_a;
 
-	if (chartIs3D) {
-		pos = vec3(pos.z, pos.x, pos.y);
-	}
+//	if (chartIs3D) {
+//		pos = vec3(pos.z, pos.x, pos.y);
+//	}
 
 	vec3 BCoeffs = calcB(vec3(
 		(texcoord.y - .5) * M_PI,			//phi
@@ -1150,12 +1156,12 @@ void main() {
 <? end
 ?>	;
 
-#if 0	// see the comments in Chart:getGLSLFunc3D for why I'm permuting basis coords there and not here ...
-	if (chartIs3D) {
+#if 1	// see the comments in Chart:getGLSLFunc3D for why I'm permuting basis coords there and not here ...
+//	if (chartIs3D) {
 		e[0] = xformZBackToZUp(e[0]);
 		e[1] = xformZBackToZUp(e[1]);
 		e[2] = xformZBackToZUp(e[2]);
-	}
+//	}
 #endif
 
 	// do this before normalizing
@@ -1187,6 +1193,9 @@ void main() {
 	fragColor = vec4(1., 1., 1., 1.);
 }
 ]],
+			uniforms = {
+				chartIs3D = false,
+			},
 		}:useNone()
 
 		self.arrowFieldSceneObj = GLSceneObject{
@@ -1381,6 +1390,9 @@ void main() {
 		{
 			gradTex = 0,
 			fieldLineVtxsTex = 1,
+		},
+		uniforms = {
+			chartIs3D = false,
 		},
 	}:useNone()
 
@@ -1756,7 +1768,6 @@ function App:update(...)
 
 	local shader = assert(overlays[tonumber(guivars.overlayIndex)]).shader
 	local gradTex = assert(gradients[tonumber(guivars.gradientIndex)]).tex
-	local chart = assert(charts[tonumber(guivars.geomIndex)])
 
 -- TODO more samples
 --[[
@@ -1787,11 +1798,9 @@ function App:update(...)
 		self.arrowFieldSceneObj.uniforms.BMagMax = self.B3Max.x
 		self.arrowFieldSceneObj.uniforms.arrowScale = guivars.arrowScale
 
-		self.arrowFieldSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
-		self.arrowFieldSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
-		self.arrowFieldSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
-		self.arrowFieldSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
-		self.arrowFieldSceneObj.uniforms.chartIs3D = chart.is3D or false
+		for i,chartWeightName in ipairs(chartWeightNames) do
+			self.arrowFieldSceneObj.uniforms[chartWeightName] = guivars[chartWeightName]
+		end
 
 		self.arrowFieldSceneObj:draw()
 	end
@@ -1801,18 +1810,16 @@ function App:update(...)
 		self.fieldLineSceneObj.uniforms.BMag = {self.B3Min.x, self.B3Max.x}
 
 		-- TODO if we're using weights then why do we need the 'chartIs3D' flag?
-		self.fieldLineSceneObj.uniforms.weight_Equirectangular = guivars.geomIndex == chartIndexForName.Equirectangular and 1 or 0
-		self.fieldLineSceneObj.uniforms.weight_Azimuthal_equidistant = guivars.geomIndex == chartIndexForName['Azimuthal equidistant'] and 1 or 0
-		self.fieldLineSceneObj.uniforms.weight_Mollweide = guivars.geomIndex == chartIndexForName.Mollweide and 1 or 0
-		self.fieldLineSceneObj.uniforms.weight_WGS84 = guivars.geomIndex == chartIndexForName.WGS84 and 1 or 0
-		self.fieldLineSceneObj.uniforms.chartIs3D = chart.is3D or false
+		for i,chartWeightName in ipairs(chartWeightNames) do
+			self.fieldLineSceneObj.uniforms[chartWeightName] = guivars[chartWeightName]
+		end
 
 		self.fieldLineSceneObj:draw()
 	end
 
 	gl.glEnable(gl.GL_BLEND)
 
-	chart:draw(self, shader, gradTex)
+	self:drawChart(shader, gradTex)
 
 	gl.glDisable(gl.GL_BLEND)
 	gl.glDisable(gl.GL_DEPTH_TEST)
@@ -1851,17 +1858,36 @@ function App:updateGUI()
 			ig.luatableCheckbox('draw arrow field', guivars, 'doDrawArrowField')
 			ig.luatableCheckbox('draw field lines', guivars, 'doDrawFieldLines')
 
-			ig.igText'chart'
-			for i,chart in ipairs(charts) do
-				ig.luatableRadioButton(chart.name, guivars, 'geomIndex', i)
+			do
+				ig.igText'chart'
+
+				ig.luatableCheckbox('normalize weights', guivars, 'normalizeWeights')
+				local changed
+				for _,chartWeightName in ipairs(chartWeightNames) do
+					if ig.luatableSliderFloat(chartWeightName, guivars, chartWeightName, 0, 1) then
+						changed = chartWeightName
+					end
+				end
+				if guivars.normalizeWeights and changed then
+					local restFrac = 1 - guivars[changed]
+					local totalRest = 0
+					for _,chartWeightName in ipairs(chartWeightNames) do
+						if chartWeightName ~= changed then
+							totalRest = totalRest + guivars[chartWeightName]
+						end
+					end
+					for _,chartWeightName in ipairs(chartWeightNames) do
+						if chartWeightName ~= changed then
+							if totalRest == 0 then
+								guivars[chartWeightName] = 0
+							else
+								guivars[chartWeightName] = restFrac * guivars[chartWeightName] / totalRest
+							end
+						end
+					end
+				end
 			end
 
-			ig.igSeparator()
-
-			local chart = assert(charts[tonumber(guivars.geomIndex)])
-			if chart.updateGUI then
-				chart:updateGUI()
-			end
 
 			ig.igSeparator()
 
