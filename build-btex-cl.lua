@@ -343,8 +343,10 @@ real4 calcB(real4 plh) {
 
 }
 
-kernel void calcBBuf(
-	global float4 * BBuf
+kernel void calcBBufs(
+	global float4 * BBuf,
+	global float4 * B2Buf,
+	global float4 * B3Buf
 ) {
 	initKernel();
 
@@ -359,214 +361,77 @@ kernel void calcBBuf(
 	real lon = (u * 2. - 1.) * 180.;
 	real lambda = lon * M_PI / 180.;
 
-	BBuf[index] = convert_float4(calcB(_real4(phi, lambda, 0., 0.)));
+	real4 plh = _real4(phi, lambda, 0., 0.);
+
+	real4 B = calcB(plh);
+	BBuf[index] = convert_float4(B);
+
+
+	real4 dphi = _real4(M_PI / (real)londim, 0., 0., 0.);
+	real4 dlambda = _real4(0., 2. * M_PI / (real)latdim, 0., 0.);
+	real4 dheight = _real4(0., 0., 1000., 0.);
+
+	// TODO units anyone?
+	real4 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / (2. * dphi.x) / (wgs84_a * 1e+3 * cos(plh.x));
+	real4 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / (2. * dlambda.y) / (wgs84_a * 1e+3);
+	real4 dheight_B = (calcB(plh + dheight) - calcB(plh - dheight)) / (2. * dheight.z);
+
+	real div2D_B = dphi_B.x + dlambda_B.y;
+	real div_B = div2D_B + dheight_B.z;
+
+	real4 curl_B = _real4(
+		dlambda_B.z - dheight_B.y,
+		dheight_B.x - dphi_B.z,
+		dphi_B.y - dlambda_B.x,
+		0.
+	);
+
+	B2Buf[index] = convert_float4(_real4(
+		div_B,
+		div2D_B,
+		curl_B.z,
+		length(curl_B)
+	));
+	
+	B3Buf[index] = convert_float4(_real4(
+		length(B.xyz),
+		length(B.xy),
+		0.,
+		1.
+	));
 }
 ]],	{
 		wgs84 = W.wgs84,
 		wmm = W.wmm,
 		nMax = W.nMax,
 	})
+
 path'build-btex.cl':write(code)
 local program = env:program{code = code}
 program:compile()
+local calcBKernel = program:kernel'calcBBufs'
 
 local BBuf = env:buffer{name='BBuf', type='float4'}
-local calcBKernel = program:kernel'calcBBuf'
+local B2Buf = env:buffer{name='B2Buf', type='float4'}
+local B3Buf = env:buffer{name='B3Buf', type='float4'}
+
 calcBKernel.obj:setArg(0, BBuf.obj)
+calcBKernel.obj:setArg(1, B2Buf.obj)
+calcBKernel.obj:setArg(2, B3Buf.obj)
 calcBKernel()
+
 local BImg = Image(londim, latdim, 4, 'float')	-- Bx, By, Bz, 0
-BBuf:toCPU(BImg.buffer)
-BImg:save'B.fits'
-error'FINSIHME'
-
-local B2Buf = env:buffer{name='B2Buf', type='real4'}
-local B3Buf = env:buffer{name='B3Buf', type='real4'}
-
-print'Building B'
-local lastTime = os.time()
-local Bptr = BImg.buffer+0
-for j=0,latdim-1 do
-	for i=0,londim-1 do
-		local u = (i + .5) / londim
-		local lon = (u * 2 - 1) * 180
-		local lambda = math.rad(lon)
-
-		local thisTime = os.time()
-		if lastTime ~= thisTime then
-			lastTime = thisTime
-			print(
-				(100 * (i + londim * j) / (latdim * londim))
-				..'%% complete'
-			)
-		end
-
-		-- calcB
-
-		local Bx, By, Bz = W:calcB(phi, lambda, 0)
-
-		Bptr[0] = Bx	Bptr=Bptr+1
-		Bptr[0] = By	Bptr=Bptr+1
-		Bptr[0] = Bz	Bptr=Bptr+1
-		Bptr[0] = 0		Bptr=Bptr+1
-	end
-end
-assert.eq(Bptr, BImg.buffer + BImg.channels * BImg.width * BImg.height)
-
-
-print'Building B2 and B3'
 local B2Img = Image(londim, latdim, 4, 'float')	-- div B, div2D B, curl B, |curl B|
 local B3Img = Image(londim, latdim, 4, 'float')	-- |B| |B|2d, 0, 0
 
-local lastTime = os.time()
-local Bptr = BImg.buffer+0
-local B2ptr = B2Img.buffer+0
-local B3ptr = B3Img.buffer+0
-for j=0,latdim-1 do
-	local v = (j + .5) / latdim
-	local lat = (v * 2 - 1) * 90
-	local phi = math.rad(lat)
-	local cos_phi = math.cos(phi)
-	for i=0,londim-1 do
-		local u = (i + .5) / londim
-		local lon = (u * 2 - 1) * 180
-		local lambda = math.rad(lon)
+BBuf:toCPU(BImg.buffer)
+B2Buf:toCPU(B2Img.buffer)
+B3Buf:toCPU(B3Img.buffer)
 
-		local thisTime = os.time()
-		if lastTime ~= thisTime then
-			lastTime = thisTime
-			print(
-				(100 * (i + londim * j) / (latdim * londim))
-				..'%% complete'
-			)
-		end
-
-		local Bx, By, Bz = Bptr[0], Bptr[1], Bptr[2]
-
-		-- calcB2
-
-		-- [[ calculated again
-		local Bx_phiR, By_phiR, Bz_phiR = W:calcB(phi + dphi, lambda, 0)
-		local Bx_phiL, By_phiL, Bz_phiL = W:calcB(phi - dphi, lambda, 0)
-
-		local Bx_lambdaR, By_lambdaR, Bz_lambdaR = W:calcB(phi, lambda + dlambda, 0)
-		local Bx_lambdaL, By_lambdaL, Bz_lambdaL = W:calcB(phi, lambda - dlambda, 0)
-		--]]
-		--[[ use cached BImg copy
-		local flip
-		local iR = i
-		local jR = j + 1
-		if jR > latdim-1 then
-			-- across the pole?
-			-- lat -> lat + 180 degrees
-			-- lon -> -lon
-			-- flip everything
-			iR = (iR + bit.rshift(londim, 1)) % londim
-			jR = latdim-1 - (jR - (latdim-1))
-			flip = true
-		end
-assert.le(0, iR) assert.lt(iR, londim)
-assert.le(0, jR) assert.lt(jR, latdim)
-		local Bx_phiR = BImg.buffer[0 + BImg.channels * (iR + londim * jR)]
-		local By_phiR = BImg.buffer[1 + BImg.channels * (iR + londim * jR)]
-		local Bz_phiR = BImg.buffer[2 + BImg.channels * (iR + londim * jR)]
-		if flip then -- I flip these when I go over the pole ... right?
-			Bx_phiR = -Bx_phiR
-			By_phiR = -By_phiR
-		end
-
-		local iL = i
-		local jL = j - 1
-		local flip
-		if jL < 0 then
-			-- same
-			iL = (iL + bit.rshift(londim, 1)) % londim
-			jL = -jL
-			flip = true
-		end
-assert.le(0, iL) assert.lt(iL, londim)
-assert.le(0, jL) assert.lt(jL, latdim)
-		local Bx_phiL = BImg.buffer[0 + BImg.channels * (iL + londim * jL)]
-		local By_phiL = BImg.buffer[1 + BImg.channels * (iL + londim * jL)]
-		local Bz_phiL = BImg.buffer[2 + BImg.channels * (iL + londim * jL)]
-		if flip then -- I flip these when I go over the pole ... right?
-			Bx_phiL = -Bx_phiL
-			By_phiL = -By_phiL
-		end
-
-		local jR = j
-		local iR = i + 1
-		if iR > londim-1 then
-			iR = iR % londim
-		end
-assert.le(0, iR) assert.lt(iR, londim)
-assert.le(0, jR) assert.lt(jR, latdim)
-		local Bx_lambdaR = BImg.buffer[0 + BImg.channels * (iR + londim * jR)]
-		local By_lambdaR = BImg.buffer[1 + BImg.channels * (iR + londim * jR)]
-		local Bz_lambdaR = BImg.buffer[2 + BImg.channels * (iR + londim * jR)]
-
-		local jL = j
-		local iL = i - 1
-		if iL < 0 then
-			iL = iL % londim
-		end
-assert.le(0, iL) assert.lt(iL, londim)
-assert.le(0, jL) assert.lt(jL, latdim)
-		local Bx_lambdaL = BImg.buffer[0 + BImg.channels * (iL + londim * jL)]
-		local By_lambdaL = BImg.buffer[1 + BImg.channels * (iL + londim * jL)]
-		local Bz_lambdaL = BImg.buffer[2 + BImg.channels * (iL + londim * jL)]
-		--]]
-
-		-- there is no separate altitude cache
-		local Bx_heightR, By_heightR, Bz_heightR = W:calcB(phi, lambda, 0 + dheight)
-		local Bx_heightL, By_heightL, Bz_heightL = W:calcB(phi, lambda, 0 - dheight)
-
-		-- [[ TODO both here and run.lua's calcB2Code, I am probably off in my magnitudes because it looks to be all zeroes
-		local dBx_dphi = (Bx_phiR - Bx_phiL) / (2 * dphi) / (wgs84.a * 1e+3 * cos_phi)
-		local dBy_dphi = (By_phiR - By_phiL) / (2 * dphi) / (wgs84.a * 1e+3 * cos_phi)
-		local dBz_dphi = (Bz_phiR - Bz_phiL) / (2 * dphi) / (wgs84.a * 1e+3 * cos_phi)
-
-		local dBx_dlambda = (Bx_lambdaR - Bx_lambdaL) / (2 * dlambda) / (wgs84.a * 1e+3)
-		local dBy_dlambda = (By_lambdaR - By_lambdaL) / (2 * dlambda) / (wgs84.a * 1e+3)
-		local dBz_dlambda = (Bz_lambdaR - Bz_lambdaL) / (2 * dlambda) / (wgs84.a * 1e+3)
-
-		local dBx_dheight = (Bx_heightR - Bx_heightL) / (2 * dheight)
-		local dBy_dheight = (By_heightR - By_heightL) / (2 * dheight)
-		local dBz_dheight = (Bz_heightR - Bz_heightL) / (2 * dheight)
-		--]]
-
-		local div2D_B = dBx_dphi + dBy_dlambda
-		local div_B = div2D_B + dBz_dheight
-
-		local curl_B_x = dBz_dlambda - dBy_dheight
-		local curl_B_y = dBx_dheight - dBz_dphi
-		local curl_B_z = dBy_dphi - dBx_dlambda
-
-		local len_curl_B = math.sqrt(curl_B_x^2 + curl_B_y^2 + curl_B_z^2)
-
-		B2ptr[0] = div_B		B2ptr=B2ptr+1
-		B2ptr[0] = div2D_B		B2ptr=B2ptr+1
-		B2ptr[0] = curl_B_z		B2ptr=B2ptr+1
-		B2ptr[0] = len_curl_B	B2ptr=B2ptr+1
-
-
-		-- calcB3
-
-
-		local len_B2 = math.sqrt(Bx^2 + By^2)
-		local len_B3 = math.sqrt(len_B2^2 + Bz^2)
-
-		B3ptr[0] = len_B2		B3ptr=B3ptr+1
-		B3ptr[0] = len_B3		B3ptr=B3ptr+1
-		B3ptr[0] = 0			B3ptr=B3ptr+1
-		B3ptr[0] = 0			B3ptr=B3ptr+1
-
-
-		Bptr=Bptr+4
-	end
-end
-assert.eq(Bptr, BImg.buffer + BImg.channels * BImg.width * BImg.height)
-assert.eq(B2ptr, B2Img.buffer + B2Img.channels * B2Img.width * B2Img.height)
-assert.eq(B3ptr, B3Img.buffer + B3Img.channels * B3Img.width * B3Img.height)
-
+BImg:save'B.fits'
 B2Img:save'B2.fits'
 B3Img:save'B3.fits'
+
+BImg:normalize():rgb():save'B.png'
+B2Img:normalize():rgb():save'B2.png'
+B3Img:normalize():rgb():save'B3.png'
