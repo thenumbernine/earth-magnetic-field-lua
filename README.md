@@ -34,3 +34,4 @@ TODO:
 - Update B stats when the dt slider changes.
 - Regenerate magnetic field lines when the dt slider changes.
 	- Everyone knows how to do realtime 2D isobars on the GPU.  There's some stuff on 3D surfaces on GPU.  But what about realtime field line calculations on GPU?
+	- use atomics and compute shaders

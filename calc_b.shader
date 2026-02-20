@@ -18,10 +18,12 @@ vec2 cplxmul(vec2 a, vec2 b) {
 }
 
 /*
+ported from WMM2020 GeomagnetismLibrary.c
+
 plh.xyz = phi, lambda, height
 
-phi in [-pi/2, pi/2]
-lambda in [-pi, pi]
+phi in [-π/2, π/2]
+lambda in [-π, π]
 height is in m
 */
 vec3 calcB(vec3 plh) {
