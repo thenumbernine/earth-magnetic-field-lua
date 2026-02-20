@@ -48,9 +48,7 @@ local dphi = math.pi / londim
 local dlambda = 2 * math.pi / latdim
 local dheight = 1000
 
-error"TODO port the calcB somehow ... either the glsl one which is a inline loop mess, or the lua one which is unoptimized ... or the original which is also unoptimized,but at least it's in C"
-local program = env:program{
-	code = template([[
+local code = template([[
 
 <?
 nMax = nMax or #wmm
@@ -77,23 +75,19 @@ real2 cplxmul(real2 a, real2 b) {
 
 /*
 this is called "shit-multiply" because the folks at OpenGL named their matrixes backwards.
-This is a 3x2 matrix.
-And it's a left-handed row-multipy of a vec3.
-And a right-handed col-mulitply of a vec2
+a is the diagonal of a 3x3 matrix,
+b is a 3x2 matrix, but GLSL calls it a 2x2.
+c is a 2x1 vector
 */
-real glslStyle_vec3_mat2x2_vec2_shitWeightedInnerProduct(
+real4 glslStyle_vec3_mat2x3_vec2_shitMul(
 	real4 a,
 	real4 bcol1,
 	real4 bcol2,
 	real2 c
 ) {
-	return dot(
-		_real2(
-			dot(a, bcol1),
-			dot(a, bcol2)
-		),
-		c
-	);
+	real4 r = bcol1 * c.x + bcol2 * c.y;
+	// opencl per elem mul?
+	return _real4(a.x * r.x, a.y * r.y, a.z * r.z, 0.);
 }
 
 // ported from WMM2020 GeomagnetismLibrary.c
@@ -242,7 +236,7 @@ real4 calcB(real4 plh) {
 			--						n=1      	      m=0   n            n           n
 			-- Equation 12 in the WMM Technical report.  Derivative with respect to radius.
 
-?> 			+ glslStyle_vec3_mat2x2_vec2_shitWeightedInnerProduct(
+?> 			+ glslStyle_vec3_mat2x3_vec2_shitMul(
 <?			-- rhs col = lhs row mul ...
 			if m == 0 then
 ?> 				_real4(-P_<?=int(index)?>.y, 0., -P_<?=int(index)?>.x, 0.),
@@ -371,8 +365,9 @@ kernel void calcBBuf(
 		wgs84 = W.wgs84,
 		wmm = W.wmm,
 		nMax = W.nMax,
-	}),
-}
+	})
+path'build-btex.cl':write(code)
+local program = env:program{code = code}
 program:compile()
 
 local BBuf = env:buffer{name='BBuf', type='float4'}
@@ -382,7 +377,7 @@ calcBKernel()
 local BImg = Image(londim, latdim, 4, 'float')	-- Bx, By, Bz, 0
 BBuf:toCPU(BImg.buffer)
 BImg:save'B.fits'
-os.exit()
+error'FINSIHME'
 
 local B2Buf = env:buffer{name='B2Buf', type='real4'}
 local B3Buf = env:buffer{name='B3Buf', type='real4'}

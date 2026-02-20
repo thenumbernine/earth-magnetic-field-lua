@@ -347,6 +347,8 @@ function App:initGL(...)
 		wmm = W.wmm,
 		nMax = W.nMax,
 	})
+
+path'calc_b_processed.frag':write(self.calcBCode)
 --DEBUG:print(require'template.showcode'(self.calcBCode))
 
 	self.quadGeom = GLGeometry{
