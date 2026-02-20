@@ -402,9 +402,9 @@ vec4 calcB2(vec3 plh) {
 	vec3 dheight = vec3(0., 0., 1000.);
 
 	// TODO units anyone?
-	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / dphi.x / (wgs84_a * 1e+3 * cos(plh.x));
-	vec3 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / dlambda.y / (wgs84_a * 1e+3);
-	vec3 dheight_B = (calcB(plh + dheight) - calcB(plh - dheight)) / dheight.z;
+	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / (2. * dphi.x) / (wgs84_a * 1e+3 * cos(plh.x));
+	vec3 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / (2. * dlambda.y) / (wgs84_a * 1e+3);
+	vec3 dheight_B = (calcB(plh + dheight) - calcB(plh - dheight)) / (2. * dheight.z);
 
 	float div2D_B = dphi_B.x + dlambda_B.y;
 	float div_B = div2D_B + dheight_B.z;
