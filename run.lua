@@ -630,6 +630,8 @@ for chartIndex,c in ipairs(charts) do
 end
 
 
+App.viewDist = 2
+App.viewOrthoSize = 2
 function App:initGL(...)
 	if App.super.initGL then
 		App.super.initGL(self, ...)
@@ -646,10 +648,13 @@ function App:initGL(...)
 		grad.tex = grad:gen()
 	end
 
+print('#wmm', #wmm)
 	self.calcBCode = template(assert(path'calc_b.shader':read()), {
 		wgs84 = wgs84,
 		wmm = wmm,
+		nMax = 2,	-- default: nMax = #wmm = 12
 	})
+print(require'template.showcode'(self.calcBCode))
 
 	self.quadGeom = GLGeometry{
 		mode = gl.GL_TRIANGLE_STRIP,
@@ -999,8 +1004,8 @@ void main() {
 	end
 
 	self.view.ortho = true
-	self.view.pos.z = 2
-	self.view.orthoSize = 2
+	self.view.pos.z = self.viewDist
+	self.view.orthoSize = self.viewOrthoSize
 	gl.glClearColor(0,0,0,0)
 
 --[=[
@@ -1827,73 +1832,91 @@ function App:updateGUI()
 	end
 	self.frames = (self.frames or 0) + 1
 
-	ig.igText('fps: '..tostring(self.fps))
+
+	ig.igSetNextWindowBgAlpha(.3)
+	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
+	if ig.igBeginMainMenuBar() then
+		if ig.igBeginMenu'quakes:' then
+
+			ig.igText('fps: '..tostring(self.fps))
 
 
-	ig.luatableCheckbox('ortho', self.view, 'ortho')
-	ig.luatableCheckbox('draw arrow field', guivars, 'doDrawArrowField')
-	ig.luatableCheckbox('draw field lines', guivars, 'doDrawFieldLines')
+			ig.luatableCheckbox('ortho', self.view, 'ortho')
+			if ig.igButton'reset view' then
+				self.view.ortho = true
+				self.view.orthoSize = self.viewOrthoSize
+				self.view.angle:set(0,0,0,1)
+				self.view.orbit:set(0,0,0)
+				self.view.pos:set(0,0,self.viewDist)
+			end
+			ig.luatableCheckbox('draw arrow field', guivars, 'doDrawArrowField')
+			ig.luatableCheckbox('draw field lines', guivars, 'doDrawFieldLines')
 
-	ig.igText'chart'
-	for i,chart in ipairs(charts) do
-		ig.luatableRadioButton(chart.name, guivars, 'geomIndex', i)
+			ig.igText'chart'
+			for i,chart in ipairs(charts) do
+				ig.luatableRadioButton(chart.name, guivars, 'geomIndex', i)
+			end
+
+			ig.igSeparator()
+
+			local chart = assert(charts[tonumber(guivars.geomIndex)])
+			if chart.updateGUI then
+				chart:updateGUI()
+			end
+
+			ig.igSeparator()
+
+			ig.igText'overlay'
+			for i,overlay in ipairs(overlays) do
+				ig.luatableRadioButton(overlay.name, guivars, 'overlayIndex', i)
+			end
+
+			ig.igSeparator()
+
+			ig.igText'gradient'
+			for i,grad in ipairs(gradients) do
+				ig.luatableRadioButton(grad.name, guivars, 'gradientIndex', i)
+			end
+			ig.luatableInputFloat('gradScale', guivars, 'gradScale')
+
+			ig.luatableInputFloat('alpha', guivars, 'drawAlpha')
+			ig.luatableInputFloat('arrow altitude', guivars, 'arrowHeight')
+			ig.luatableInputFloat('arrow scale', guivars, 'arrowScale')
+			ig.luatableInputFloat('arrow z scale', guivars, 'arrowZScale')
+			ig.luatableCheckbox('arrow field normalize', guivars, 'arrowFieldNormalize')
+
+			if ig.luatableInputInt('arrow lat dim', guivars, 'arrowLatDim')
+			or ig.luatableInputInt('arrow lon dim', guivars, 'arrowLonDim')
+			or ig.luatableCheckbox('arrows even distribute', guivars, 'arrowEvenDistribute')
+			then
+				self:updateArrowTex()
+			end
+
+			if ig.luatableInputFloat('field line init altitude', guivars, 'fieldLineHeight')	-- techniically this should just trigger a re-integration, not a realloc
+			or ig.luatableInputInt('field line lat dim', guivars, 'fieldLineLatDim')
+			or ig.luatableInputInt('field line lon dim', guivars, 'fieldLineLonDim')
+			or ig.luatableCheckbox('field lines even distribute', guivars, 'fieldLineEvenDistribute')
+			or ig.luatableInputInt('field line iter', guivars, 'fieldLineIter')
+			then
+				self:updateFieldLines()
+			end
+
+			if ig.luatableInputFloat('field line int step', guivars, 'fieldLineIntStep') then
+				self:integrateFieldLines()
+			end
+
+			-- how linear are the g and h coeffs?
+			-- can I just factor out the dt?
+			--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
+			if ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', -50, 50) then
+				self.lastUpdateDTTime = timer.getTime()
+				self:integrateFieldLines()
+			end
+			ig.igEndMenu()
+		end
+		ig.igEndMainMenuBar()
 	end
-
-	ig.igSeparator()
-
-	local chart = assert(charts[tonumber(guivars.geomIndex)])
-	if chart.updateGUI then
-		chart:updateGUI()
-	end
-
-	ig.igSeparator()
-
-	ig.igText'overlay'
-	for i,overlay in ipairs(overlays) do
-		ig.luatableRadioButton(overlay.name, guivars, 'overlayIndex', i)
-	end
-
-	ig.igSeparator()
-
-	ig.igText'gradient'
-	for i,grad in ipairs(gradients) do
-		ig.luatableRadioButton(grad.name, guivars, 'gradientIndex', i)
-	end
-	ig.luatableInputFloat('gradScale', guivars, 'gradScale')
-
-	ig.luatableInputFloat('alpha', guivars, 'drawAlpha')
-	ig.luatableInputFloat('arrow altitude', guivars, 'arrowHeight')
-	ig.luatableInputFloat('arrow scale', guivars, 'arrowScale')
-	ig.luatableInputFloat('arrow z scale', guivars, 'arrowZScale')
-	ig.luatableCheckbox('arrow field normalize', guivars, 'arrowFieldNormalize')
-
-	if ig.luatableInputInt('arrow lat dim', guivars, 'arrowLatDim')
-	or ig.luatableInputInt('arrow lon dim', guivars, 'arrowLonDim')
-	or ig.luatableCheckbox('arrows even distribute', guivars, 'arrowEvenDistribute')
-	then
-		self:updateArrowTex()
-	end
-
-	if ig.luatableInputFloat('field line init altitude', guivars, 'fieldLineHeight')	-- techniically this should just trigger a re-integration, not a realloc
-	or ig.luatableInputInt('field line lat dim', guivars, 'fieldLineLatDim')
-	or ig.luatableInputInt('field line lon dim', guivars, 'fieldLineLonDim')
-	or ig.luatableCheckbox('field lines even distribute', guivars, 'fieldLineEvenDistribute')
-	or ig.luatableInputInt('field line iter', guivars, 'fieldLineIter')
-	then
-		self:updateFieldLines()
-	end
-
-	if ig.luatableInputFloat('field line int step', guivars, 'fieldLineIntStep') then
-		self:integrateFieldLines()
-	end
-
-	-- how linear are the g and h coeffs?
-	-- can I just factor out the dt?
-	--ig.luatableInputFloat('time from '..wmm.epoch, guivars, 'fieldDT')
-	if ig.luatableSliderFloat('years from '..tostring(wmm.epoch), guivars, 'fieldDT', -50, 50) then
-		self.lastUpdateDTTime = timer.getTime()
-		self:integrateFieldLines()
-	end
+	ig.igPopStyleColor(1)
 
 	-- only once the dt var has finished updating ...
 	if self.lastUpdateDTTime

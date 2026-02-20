@@ -1,5 +1,5 @@
 <?
-local nMax = #wmm
+nMax = nMax or #wmm
 local glnumber = require 'gl.number'
 local function int(x) return x < 0 and math.ceil(x) or math.floor(x) end
 for k,v in pairs(wgs84) do
@@ -54,14 +54,12 @@ vec3 calcB(vec3 plh) {
 
 	vec2 cisLambda = vec2(cos(plh.y), sin(plh.y));
 
-	vec2 cisLambdaToTheM[nMax+1];
-	cisLambdaToTheM[0] = vec2(1., 0.);
-	cisLambdaToTheM[1] = cisLambda;
-
-	for (int m=2; m <= nMax; ++m) {
-		cisLambdaToTheM[m] = cplxmul(cisLambdaToTheM[m-1], cisLambda);
-	}
-<?
+	//vec2 cisLambdaToTheM[nMax+1];
+	vec2 cisLambdaToTheM_0 = vec2(1., 0.);
+	vec2 cisLambdaToTheM_1 = cisLambda;
+<? for m=2,nMax do
+?>	vec2 cisLambdaToTheM_<?=m?> = cplxmul(cisLambdaToTheM_<?=m-1?>, cisLambda);
+<? end
 
 	-- end MAG_ComputeSphericalHarmonicVariables
 	-- begin MAG_AssociatedLegendreFunction
@@ -89,8 +87,8 @@ vec3 calcB(vec3 plh) {
 	-- begin MAG_PcupLow
 ?>
 
-	vec2 P[numTerms];	//Legendre function & derivative
-	P[0] = vec2(1., 0.);
+	//vec2 P[numTerms];	//Legendre function & derivative
+	vec2 P_0 = vec2(1., 0.);
 <?
 	--	 First,	Compute the Gauss-normalized associated Legendre functions
 
@@ -99,21 +97,21 @@ vec3 calcB(vec3 plh) {
 			local index = n * (n + 1) / 2 + m
 			if n == m then
 				local index1 = (n - 1) * n / 2 + m - 1
-?>	P[<?=int(index)?>] = vec2(cisPhiSph.x * P[<?=int(index1)?>].x, cisPhiSph.x * P[<?=int(index1)?>].y + cisPhiSph.y * P[<?=int(index1)?>].x);
+?>	vec2 P_<?=int(index)?> = vec2(cisPhiSph.x * P_<?=int(index1)?>.x, cisPhiSph.x * P_<?=int(index1)?>.y + cisPhiSph.y * P_<?=int(index1)?>.x);
 <?
 			elseif n == 1 and m == 0 then
 				local index1 = (n - 1) * n / 2 + m
-?>	P[<?=int(index)?>] = vec2(cisPhiSph.y * P[<?=int(index1)?>].x, cisPhiSph.y * P[<?=int(index1)?>].y - cisPhiSph.x * P[<?=int(index1)?>].x);
+?>	vec2 P_<?=int(index)?> = vec2(cisPhiSph.y * P_<?=int(index1)?>.x, cisPhiSph.y * P_<?=int(index1)?>.y - cisPhiSph.x * P_<?=int(index1)?>.x);
 <?
 			elseif n > 1 and n ~= m then
 				local index1 = (n - 2) * (n - 1) / 2 + m
 				local index2 = (n - 1) * n / 2 + m
 				if m > n - 2 then
-?>	P[<?=int(index)?>] = vec2(cisPhiSph.y * P[<?=int(index2)?>].x, cisPhiSph.y * P[<?=int(index2)?>].y - cisPhiSph.x * P[<?=int(index2)?>].x);
+?>	vec2 P_<?=int(index)?> = vec2(cisPhiSph.y * P_<?=int(index2)?>.x, cisPhiSph.y * P_<?=int(index2)?>.y - cisPhiSph.x * P_<?=int(index2)?>.x);
 <?
 				else
 					local k = (((n - 1) * (n - 1)) - (m * m)) / ((2 * n - 1) * (2 * n - 3))
-?>	P[<?=int(index)?>] = vec2(cisPhiSph.y * P[<?=int(index2)?>].x - <?=glnumber(k)?> * P[<?=int(index1)?>].x, cisPhiSph.y * P[<?=int(index2)?>].y - cisPhiSph.x * P[<?=int(index2)?>].x - <?=glnumber(k)?> * P[<?=int(index1)?>].y);
+?>	vec2 P_<?=int(index)?> = vec2(cisPhiSph.y * P_<?=int(index2)?>.x - <?=glnumber(k)?> * P_<?=int(index1)?>.x, cisPhiSph.y * P_<?=int(index2)?>.y - cisPhiSph.x * P_<?=int(index2)?>.x - <?=glnumber(k)?> * P_<?=int(index1)?>.y);
 <?
 				end
 			end
@@ -165,11 +163,11 @@ vec3 calcB(vec3 plh) {
 			--						n=1      	      m=0   n            n           n
 			-- Equation 12 in the WMM Technical report.  Derivative with respect to radius.
 
-?>			+ vec3(-P[<?=int(index)?>].y, <?
+?>			+ vec3(-P_<?=int(index)?>.y, <?
 			if m == 0 then
 				?>0.<?
 			else
-				?>P[<?=int(index)?>].x<? end ?>, -P[<?=int(index)?>].x) * (mat2x3(vec3(<?=
+				?>P_<?=int(index)?>.x<? end ?>, -P_<?=int(index)?>.x) * (mat2x3(vec3(<?=
 						glnumber(wmm[n][m].g * -schmidtQuasiNorm[index])
 					?> - dt * <?=
 						glnumber(wmm[n][m].dg_dt * -schmidtQuasiNorm[index])
@@ -193,7 +191,7 @@ vec3 calcB(vec3 plh) {
 						glnumber(wmm[n][m].h * (n + 1) * schmidtQuasiNorm[index])
 					?> - dt * <?=
 						glnumber(wmm[n][m].dh_dt * (n + 1) * schmidtQuasiNorm[index])
-					?>)) * cisLambdaToTheM[<?=int(m)?>])
+					?>)) * cisLambdaToTheM_<?=int(m)?>)
 <?		end
 	end
 ?>
@@ -211,8 +209,8 @@ vec3 calcB(vec3 plh) {
 		// MAG_CheckGeographicPoles.
 		// begin MAG_SummationSpecial
 
-		float PS[numTerms];
-		PS[0] = 1.;
+		//float PS[numTerms];
+		float PS_0 = 1.;
 
 		B.y = 0.;
 
@@ -231,10 +229,10 @@ vec3 calcB(vec3 plh) {
 			local schmidtQuasiNorm3 = schmidtQuasiNorm2 * math.sqrt((n * 2) / (n + 1))
 			local schmidtQuasiNorm1 = schmidtQuasiNorm2
 			if n == 1 then
-?>		PS[<?=int(n)?>] = PS[<?=int(n-1)?>];
+?>		float PS_<?=int(n)?> = PS_<?=int(n-1)?>;
 <? 			else
 				local k = (((n - 1) * (n - 1)) - 1) / ((2 * n - 1) * (2 * n - 3))
-?>		PS[<?=int(n)?>] = cisPhiSph.y * PS[<?=int(n-1)?>] - <?=glnumber(k)?> * PS[<?=int(n-2)?>];
+?>		float PS_<?=int(n)?> = cisPhiSph.y * PS_<?=int(n-1)?> - <?=glnumber(k)?> * PS_<?=int(n-2)?>;
 <?
 			end
 
@@ -247,7 +245,7 @@ vec3 calcB(vec3 plh) {
 			glnumber(-wmm[n][m].h * schmidtQuasiNorm3)
 		?>, <?=
 			glnumber(wmm[n][m].g * schmidtQuasiNorm3)
-		?>)) * PS[<?=int(n)?>];
+		?>)) * PS_<?=int(n)?>;
 <?
 		end
 
