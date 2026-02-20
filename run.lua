@@ -72,7 +72,8 @@ for _,line in ipairs(lines) do
 	-- m runs 0-n
 end
 
-local nMax = #wmm
+local nMax = cmdline.nMax or #wmm
+assert.le(nMax, #wmm, "nMax must be <= #wmm")
 
 -- ported from WMM2020 GeomagnetismLibrary.c
 -- phi = radians
@@ -648,13 +649,13 @@ function App:initGL(...)
 		grad.tex = grad:gen()
 	end
 
-print('#wmm', #wmm)
+	-- TODO calcBCode per nMax, and connect it to the UI to let the user increment nMax (and watch their linker slowly die...)
 	self.calcBCode = template(assert(path'calc_b.shader':read()), {
 		wgs84 = wgs84,
 		wmm = wmm,
-		nMax = 2,	-- default: nMax = #wmm = 12
+		nMax = nMax,
 	})
-print(require'template.showcode'(self.calcBCode))
+--DEBUG:print(require'template.showcode'(self.calcBCode))
 
 	self.quadGeom = GLGeometry{
 		mode = gl.GL_TRIANGLE_STRIP,
@@ -1837,9 +1838,7 @@ function App:updateGUI()
 	ig.igPushStyleColor_U32(ig.ImGuiCol_MenuBarBg, 0)
 	if ig.igBeginMainMenuBar() then
 		if ig.igBeginMenu'quakes:' then
-
 			ig.igText('fps: '..tostring(self.fps))
-
 
 			ig.luatableCheckbox('ortho', self.view, 'ortho')
 			if ig.igButton'reset view' then
