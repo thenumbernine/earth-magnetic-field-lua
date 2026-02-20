@@ -175,8 +175,6 @@ local gradients = {
 				height = 1,
 
 				internalFormat = gl.GL_RGBA,
-				format = gl.GL_RGBA,
-				type = gl.GL_UNSIGNED_BYTE,
 				minFilter = gl.GL_LINEAR,
 				--magFilter = gl.GL_LINEAR_MIPMAP_LINEAR,
 				magFilter = gl.GL_LINEAR,
@@ -433,8 +431,6 @@ vec4 calcB2(vec3 plh) {
 			internalFormat = gl.GL_RGBA32F,
 			width = londim,
 			height = latdim,
-			format = gl.GL_RGBA,
-			type = gl.GL_FLOAT,
 			minFilter = gl.GL_NEAREST,
 			magFilter = gl.GL_NEAREST,
 			wrap = {
@@ -1126,8 +1122,6 @@ function App:updateArrowTex()
 		internalFormat = gl.GL_RG32F,
 		width = arrowTexSize,
 		height = arrowTexSize,
-		format = gl.GL_RG,
-		type = gl.GL_FLOAT,
 		minFilter = gl.GL_NEAREST,
 		magFilter = gl.GL_NEAREST,
 		wrap = {
@@ -1192,8 +1186,6 @@ print('# field line start coords', #self.startCoords)
 		internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
 		width = 1,			-- 1D along height for blitting's sake
 		height = #self.startCoords,
-		format = gl.GL_RGBA,
-		type = gl.GL_FLOAT,
 		minFilter = gl.GL_NEAREST,
 		magFilter = gl.GL_NEAREST,
 		wrap = {
@@ -1210,8 +1202,6 @@ print('# field line start coords', #self.startCoords)
 		internalFormat = gl.GL_RGBA32F,	-- phi, lambda, height, |B|
 		width = guivars.fieldLineIter,
 		height = #self.startCoords,
-		format = gl.GL_RGBA,
-		type = gl.GL_FLOAT,
 		minFilter = gl.GL_NEAREST,
 		magFilter = gl.GL_NEAREST,
 		wrap = {
@@ -1331,13 +1321,13 @@ function App:recalcBStats()
 	timer('generating stats', function()
 		self.BMin:set(self.minReduce(self.BTex):unpack())
 		self.BMax:set(self.maxReduce(self.BTex):unpack())
---print('reduce B min', self.BMin, 'max', self.BMax)
+print('reduce B min', self.BMin, 'max', self.BMax)
 		self.B2Min:set(self.minReduce(self.B2Tex):unpack())
 		self.B2Max:set(self.maxReduce(self.B2Tex):unpack())
---print('reduce B2 min', self.B2Min, 'max', self.B2Max)
+print('reduce B2 min', self.B2Min, 'max', self.B2Max)
 		self.B3Min:set(self.minReduce(self.B3Tex):unpack())
 		self.B3Max:set(self.maxReduce(self.B3Tex):unpack())
---print('reduce B3 min', self.B3Min, 'max', self.B3Max)
+print('reduce B3 min', self.B3Min, 'max', self.B3Max)
 
 --[[ stats should look like for wmm2020 dt=0
 x = {min = -16735.287109375, max = 41797.078125, avg = 17984.161021002, sqavg = 460231098.77605, stddev = 11696.198149258, count = 1036800},

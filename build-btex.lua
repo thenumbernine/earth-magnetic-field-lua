@@ -29,7 +29,6 @@ local dlambda = 2 * math.pi / latdim
 local dheight = 1000
 
 local BImg = Image(londim, latdim, 4, 'float')	-- Bx, By, Bz, 0
-BImg:save'B.fits'
 local B2Img = Image(londim, latdim, 4, 'float')	-- div B, div2D B, curl B, |curl B|
 local B3Img = Image(londim, latdim, 4, 'float')	-- |B| |B|2d, 0, 0
 
@@ -122,6 +121,7 @@ for j=0,latdim-1 do
 		local Bx_heightR, By_heightR, Bz_heightR = W:calcB(phi, lambda, 0 + dheight)
 		local Bx_heightL, By_heightL, Bz_heightL = W:calcB(phi, lambda, 0 - dheight)
 
+		-- [[ TODO both here and run.lua's calcB2Code, I am probably off in my magnitudes because it looks to be all zeroes
 		local dBx_dphi = (Bx_phiR - Bx_phiL) / (2 * dphi) / (wgs84.a * 1e+3 * cos_phi)
 		local dBy_dphi = (By_phiR - By_phiL) / (2 * dphi) / (wgs84.a * 1e+3 * cos_phi)
 		local dBz_dphi = (Bz_phiR - Bz_phiL) / (2 * dphi) / (wgs84.a * 1e+3 * cos_phi)
@@ -130,9 +130,10 @@ for j=0,latdim-1 do
 		local dBy_dlambda = (By_lambdaR - By_lambdaL) / (2 * dlambda) / (wgs84.a * 1e+3)
 		local dBz_dlambda = (Bz_lambdaR - Bz_lambdaL) / (2 * dlambda) / (wgs84.a * 1e+3)
 
-		local dBx_dheight = (Bx_heightR - Bx_heightL) / (2 * dheight) / (wgs84.a * 1e+3)
-		local dBy_dheight = (By_heightR - By_heightL) / (2 * dheight) / (wgs84.a * 1e+3)
-		local dBz_dheight = (Bz_heightR - Bz_heightL) / (2 * dheight) / (1e+3)
+		local dBx_dheight = (Bx_heightR - Bx_heightL) / (2 * dheight)
+		local dBy_dheight = (By_heightR - By_heightL) / (2 * dheight)
+		local dBz_dheight = (Bz_heightR - Bz_heightL) / (2 * dheight)
+		--]]
 
 		local div2D_B = dBx_dphi + dBy_dlambda
 		local div_B = div2D_B + dBz_dheight
