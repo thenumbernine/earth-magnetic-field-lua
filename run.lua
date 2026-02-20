@@ -475,39 +475,6 @@ void main() {
 		geometry = self.quadGeom,
 	}
 
-
-	-- module depends M_PI, uniform vec2 latLonDim
-	self.calcB2Code = [[
-vec4 calcB2(vec3 plh) {
-	float latdim = latLonDim.x;
-	float londim = latLonDim.y;
-	vec3 dphi = vec3(M_PI / londim, 0., 0.);
-	vec3 dlambda = vec3(0., 2. * M_PI / latdim, 0.);
-	vec3 dheight = vec3(0., 0., 1000.);
-
-	// TODO units anyone?
-	vec3 dphi_B = (calcB(plh + dphi) - calcB(plh - dphi)) / dphi.x / (wgs84_a * 1e+3 * cos(plh.x));
-	vec3 dlambda_B = (calcB(plh + dlambda) - calcB(plh - dlambda)) / dlambda.y / (wgs84_a * 1e+3);
-	vec3 dheight_B = (calcB(plh + dheight) - calcB(plh - dheight)) / dheight.z;
-
-	float div2D_B = dphi_B.x + dlambda_B.y;
-	float div_B = div2D_B + dheight_B.z;
-
-	vec3 curl_B = vec3(
-		dlambda_B.z - dheight_B.y,
-		dheight_B.x - dphi_B.z,
-		dphi_B.y - dlambda_B.x
-	);
-
-	return vec4(
-		div_B,
-		div2D_B,
-		curl_B.z,
-		length(curl_B)
-	);
-}
-]]
-
 	self.calcB2TexSceneObj = GLSceneObject{
 		program = {
 			version = 'latest',
