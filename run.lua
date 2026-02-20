@@ -571,7 +571,7 @@ local overlays = {
 	},
 }
 
-function App:drawChart(shader, gradTex)
+function App:drawChart(overlayShader, gradTex)
 	local height = 0
 	local jres = 360
 	local ires = 180
@@ -610,14 +610,14 @@ function App:drawChart(shader, gradTex)
 		end
 
 		self.chartSceneObj = GLSceneObject{
-			program = shader,
+			program = overlayShader,
 			vertexes = self.vertexBuf,
 			geometries = geometries,
 			texs = {earthtex, gradTex},
 		}
 	end
 
-	self.chartSceneObj.program = shader
+	self.chartSceneObj.program = overlayShader
 	self.chartSceneObj.texs[2] = gradTex
 	self.chartSceneObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 	self.chartSceneObj.uniforms.dt = guivars.fieldDT
@@ -879,33 +879,41 @@ void main() {
 		geometry = self.quadGeom,
 	}
 
-	local GLReduce = require 'reduce'
-	local reducePP = GLReduce:makePingPong{tex=self.BTex, fbo=self.fbo}
-	self.minReduce = GLReduce{
-		fbo = self.fbo,
-		pingpong = reducePP,
-		geometry = self.quadGeom,
-		vertexShader = self.quadGeomVertexShader,
-		gpuop = function(a,b) return 'min('..a..', '..b..')' end,
-		cpuop = function(a,b,c)
-			for i=0,3 do
-				c.s[i] = math.min(a.s[i], b.s[i])
+	do
+		local GLReduce = require 'reduce'
+		local reducePP = GLReduce:makePingPong{tex=self.BTex, fbo=self.fbo}
+		self.minReduce = GLReduce{
+			fbo = self.fbo,
+			pingpong = reducePP,
+			geometry = self.quadGeom,
+			vertexShader = self.quadGeomVertexShader,
+			gpuop = function(a,b) return 'min('..a..', '..b..')' end,
+			cpuop = function(a,b,c)
+				for i=0,3 do
+					c.s[i] = math.min(a.s[i], b.s[i])
+				end
 			end
-		end
-	}
-	self.maxReduce = GLReduce{
-		fbo = self.fbo,
-		pingpong = reducePP,
-		geometry = self.quadGeom,
-		vertexShader = self.quadGeomVertexShader,
-		gpuop = function(a,b) return 'max('..a..', '..b..')' end,
-		cpuop = function(a,b,c)
-			for i=0,3 do
-				c.s[i] = math.max(a.s[i], b.s[i])
+		}
+		self.maxReduce = GLReduce{
+			fbo = self.fbo,
+			pingpong = reducePP,
+			geometry = self.quadGeom,
+			vertexShader = self.quadGeomVertexShader,
+			gpuop = function(a,b) return 'max('..a..', '..b..')' end,
+			cpuop = function(a,b,c)
+				for i=0,3 do
+					c.s[i] = math.max(a.s[i], b.s[i])
+				end
 			end
-		end
-	}
-
+		}
+		local reduceType = self.minReduce.resultBuf.type
+		self.BMin = reduceType()
+		self.BMax = reduceType()
+		self.B2Min = reduceType()
+		self.B2Max = reduceType()
+		self.B3Min = reduceType()
+		self.B3Max = reduceType()
+	end
 	self:recalcBStats()
 
 	local overlayVertexCode = chartCode..template([[
@@ -1634,17 +1642,15 @@ function App:recalcBStats()
 	}
 
 	timer('generating stats', function()
--- [[
-		self.BMin = self.minReduce(self.BTex)
-		self.BMax = self.maxReduce(self.BTex)
-print('reduce B min', self.BMin, 'max', self.BMax)
-		self.B2Min = self.minReduce(self.B2Tex)
-		self.B2Max = self.maxReduce(self.B2Tex)
-print('reduce B2 min', self.B2Min, 'max', self.B2Max)
-		self.B3Min = self.minReduce(self.B3Tex)
-		self.B3Max = self.maxReduce(self.B3Tex)
-print('reduce B3 min', self.B3Min, 'max', self.B3Max)
---]]
+		self.BMin:set(self.minReduce(self.BTex):unpack())
+		self.BMax:set(self.maxReduce(self.BTex):unpack())
+--print('reduce B min', self.BMin, 'max', self.BMax)
+		self.B2Min:set(self.minReduce(self.B2Tex):unpack())
+		self.B2Max:set(self.maxReduce(self.B2Tex):unpack())
+--print('reduce B2 min', self.B2Min, 'max', self.B2Max)
+		self.B3Min:set(self.minReduce(self.B3Tex):unpack())
+		self.B3Max:set(self.maxReduce(self.B3Tex):unpack())
+--print('reduce B3 min', self.B3Min, 'max', self.B3Max)
 
 --[[ stats should look like for wmm2020 dt=0
 x = {min = -16735.287109375, max = 41797.078125, avg = 17984.161021002, sqavg = 460231098.77605, stddev = 11696.198149258, count = 1036800},
@@ -1766,7 +1772,7 @@ function App:update(...)
 
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
-	local shader = assert(overlays[tonumber(guivars.overlayIndex)]).shader
+	local overlayShader = assert(overlays[tonumber(guivars.overlayIndex)]).shader
 	local gradTex = assert(gradients[tonumber(guivars.gradientIndex)]).tex
 
 -- TODO more samples
@@ -1819,7 +1825,7 @@ function App:update(...)
 
 	gl.glEnable(gl.GL_BLEND)
 
-	self:drawChart(shader, gradTex)
+	self:drawChart(overlayShader, gradTex)
 
 	gl.glDisable(gl.GL_BLEND)
 	gl.glDisable(gl.GL_DEPTH_TEST)
