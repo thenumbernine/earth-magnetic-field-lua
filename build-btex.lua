@@ -13,6 +13,9 @@ but then I did all those things to try to fix the B gradient error at the poles
 TODO FIX THE B GRADIENT ERROR AT THE POLES
 
 TODO this in opencl because lua is slow
+
+hmm and this just caches one single copy.
+maybe I need to rewrite run.lua to use compute shaders ...
 --]]
 local ffi = require 'ffi'
 local assert = require 'ext.assert'
